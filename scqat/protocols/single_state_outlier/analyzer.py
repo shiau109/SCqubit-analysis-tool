@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 from scqat.core.base_analyzer import BaseAnalyzer
 from scqat.math_tools.fit_gaussian2d import FitGaussian2D
-from scqat.protocols.single_state_QND.visualization import (
+from scqat.protocols.single_state_outlier.visualization import (
     plot_2d_histogram_single,
     plot_outliers_single,
     plot_distance_vs_shot,
@@ -34,17 +34,43 @@ class SingleStateOutlierAnalyzer(BaseAnalyzer):
         Fits a single 2D Gaussian to the I/Q histogram and detects outliers.
 
         Kwargs:
+            user_mean (array-like of length 2): Optional initial guess for [I, Q] center.
             user_std (float): Optional initial guess for Gaussian std dev.
             outlier_sigma (float): Threshold for outlier detection (default: 3).
+            fixed_mean (array-like of length 2): Fixed [I, Q] center — skips fitting.
+            fixed_std (float): Fixed Gaussian std — skips fitting.
+                When both fixed_mean and fixed_std are given, the analyzer runs
+                in "outlier-only" mode: no histogram, no fit, just distance-based
+                outlier detection using the provided parameters.
         """
+        user_mean = kwargs.get("user_mean", None)
         user_std = kwargs.get("user_std", None)
         outlier_sigma = kwargs.get("outlier_sigma", 3)
+        fixed_mean = kwargs.get("fixed_mean", None)
+        fixed_std = kwargs.get("fixed_std", None)
 
-        # 1. Preprocess into 2D histogram
-        hist_dataset, std_init = self._preprocess_data(dataset, user_std)
+        # Outlier-only mode: skip fitting entirely
+        if fixed_mean is not None and fixed_std is not None:
+            fixed_mean = np.asarray(fixed_mean)
+            fitted_paras = {
+                "mean": fixed_mean.reshape(1, 2),
+                "sigma_x": float(fixed_std),
+                "sigma_y": float(fixed_std),
+                "std": float(fixed_std),
+                "amp": np.nan,
+                "offset": np.nan,
+            }
+            hist_dataset = None
+            fit_residue = None
+            norm_res = np.nan
+        else:
+            # 1. Preprocess into 2D histogram
+            hist_dataset, std_init = self._preprocess_data(dataset, user_std)
 
-        # 2. Fit single 2D Gaussian
-        fitted_paras, fit_residue, norm_res = self._fit_gaussian(hist_dataset)
+            # 2. Fit single 2D Gaussian
+            fitted_paras, fit_residue, norm_res = self._fit_gaussian(
+                hist_dataset, user_mean=user_mean, user_std=user_std
+            )
 
         # 3. Outlier detection
         I_vals = dataset["I"].values.ravel()
@@ -71,18 +97,20 @@ class SingleStateOutlierAnalyzer(BaseAnalyzer):
     ) -> Dict[str, plt.Figure]:
         figs = {}
 
-        fig_hist, ax_hist = plot_2d_histogram_single(
-            results["hist_dataset"], analysis_result=results
-        )
-        fig_outliers, ax_outliers = plot_outliers_single(
-            dataset, results["outlier_mask"], analysis_result=results
-        )
+        if results["hist_dataset"] is not None:
+            fig_hist, ax_hist = plot_2d_histogram_single(
+                results["hist_dataset"], analysis_result=results
+            )
+            figs["2DHist"] = fig_hist
 
-        fig_dist, ax_dist = plot_distance_vs_shot(dataset, results)
+        # fig_outliers, ax_outliers = plot_outliers_single(
+        #     dataset, results["outlier_mask"], analysis_result=results
+        # )
 
-        figs["2DHist"] = fig_hist
-        figs["outliers"] = fig_outliers
-        figs["distance_vs_shot"] = fig_dist
+        # fig_dist, ax_dist = plot_distance_vs_shot(dataset, results)
+
+        # figs["outliers"] = fig_outliers
+        # figs["distance_vs_shot"] = fig_dist
         return figs
 
     # ==========================================
@@ -118,13 +146,19 @@ class SingleStateOutlierAnalyzer(BaseAnalyzer):
         )
         return hist_dataset, std_init
 
-    def _fit_gaussian(self, hist_dataset):
+    def _fit_gaussian(self, hist_dataset, user_mean=None, user_std=None):
         density = hist_dataset["density"].values
         x = hist_dataset["x"].values
         y = hist_dataset["y"].values
 
         fitter = FitGaussian2D(density, x, y)
         fitter.params['sigma_y'].set(expr='sigma_x')
+        fitter.params['offset'].set(value=0, vary=False)
+        if user_mean is not None:
+            fitter.params['x0'].set(value=user_mean[0])
+            fitter.params['y0'].set(value=user_mean[1])
+        if user_std is not None:
+            fitter.params['sigma_x'].set(value=user_std)
         fit_result = fitter.fit()
 
         p = fit_result.params
