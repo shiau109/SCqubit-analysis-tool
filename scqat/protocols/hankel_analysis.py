@@ -52,7 +52,12 @@ class HankelAnalyzer(BaseAnalyzer):
     @staticmethod
     def _compute_svd(hankel_matrix):
         """Compute the economy SVD of the Hankel matrix."""
-        U, s, Vh = la.svd(hankel_matrix, full_matrices=False)
+        try:
+            U, s, Vh = la.svd(hankel_matrix, full_matrices=False)
+        except la.LinAlgError as exc:
+            raise ValueError(
+                "SVD did not converge — check input data for NaNs or infinities."
+            ) from exc
         return U, s, Vh
 
     @staticmethod
