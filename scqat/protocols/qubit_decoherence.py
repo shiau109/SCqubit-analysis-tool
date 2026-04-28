@@ -2,14 +2,19 @@
 Qubit Decoherence Protocol
 ==========================
 Fits time-resolved density-matrix elements (rho_11, rho_10) to extract
-decoherence parameters Gamma (relaxation rate) and Lambda (spectral width)
-from the non-Markovian amplitude-damping model:
+the Lindbladian decoherence rates (gamma, lambda_) from the non-Markovian
+amplitude-damping model:
 
-    d = sqrt(Lambda * (Lambda - 2*Gamma))
-    G(t) = exp(-Lambda*t/2) [cosh(d*t/2) + (Lambda/d) sinh(d*t/2)]
+    Lambda = gamma / 2
+    d      = sqrt(Lambda**2 - 4 * lambda_**2)
+    G(t)   = exp(-Lambda*t/2) [cosh(d*t/2) + (Lambda/d) sinh(d*t/2)]
 
     rho_11(t) = |G(t)|^2  rho_11(0)
     rho_10(t) =  G(t)     rho_10(0)
+
+Relation to the older (Gamma, Lambda) parameterisation:
+    gamma   = 2 * Lambda                  (relaxation rate)
+    lambda_ = sqrt(Gamma * Lambda / 2)    (coupling strength)
 
 Expected xarray.Dataset contract:
     Coordinates:
@@ -37,7 +42,7 @@ from scqat.math_tools.fit_qubit_decoherence import (
 class QubitDecoherenceAnalyzer(BaseAnalyzer):
     """
     Fits qubit decoherence data (rho_11 and/or rho_10 vs time) to the
-    non-Markovian amplitude-damping model parameterised by Gamma and Lambda.
+    non-Markovian amplitude-damping model parameterised by (gamma, lambda_).
     """
 
     protocol_name = "qubit_decoherence"
@@ -66,7 +71,7 @@ class QubitDecoherenceAnalyzer(BaseAnalyzer):
         Returns
         -------
         dict with a sub-dict for each fitted variable containing:
-            Gamma, Gamma_err, Lambda, Lambda_err, d, rho_0, rho_0_err,
+            gamma, gamma_err, lambda_, lambda_err, d, rho_0, rho_0_err,
             fit_curve, residuals, regime
         """
         t = dataset.coords["time"].values.astype(float)
@@ -83,17 +88,18 @@ class QubitDecoherenceAnalyzer(BaseAnalyzer):
             result = fitter.fit()
 
             p = result.params
-            Gamma_fit = float(p["Gamma"].value)
-            Lambda_fit = float(p["Lambda"].value)
+            gamma_fit = float(p["gamma"].value)
+            lambda_fit = float(p["lambda_"].value)
             rho0_fit = float(p["rho_0"].value)
-            Gamma_err = float(p["Gamma"].stderr) if p["Gamma"].stderr is not None else float("nan")
-            Lambda_err = float(p["Lambda"].stderr) if p["Lambda"].stderr is not None else float("nan")
+            gamma_err = float(p["gamma"].stderr) if p["gamma"].stderr is not None else float("nan")
+            lambda_err = float(p["lambda_"].stderr) if p["lambda_"].stderr is not None else float("nan")
             rho0_err = float(p["rho_0"].stderr) if p["rho_0"].stderr is not None else float("nan")
 
             model_fn = _rho11_model if var_name == "rho_11" else _rho10_model
-            y_fit = model_fn(t, Gamma_fit, Lambda_fit, rho0_fit)
+            y_fit = model_fn(t, gamma_fit, lambda_fit, rho0_fit)
 
-            d_sq = Lambda_fit * (Lambda_fit - 2 * Gamma_fit)
+            # d^2 = (gamma/2)^2 - 4*lambda_^2
+            d_sq = (gamma_fit / 2.0) ** 2 - 4.0 * lambda_fit ** 2
             if d_sq > 1e-20:
                 regime = "overdamped"
             elif d_sq < -1e-20:
@@ -102,10 +108,10 @@ class QubitDecoherenceAnalyzer(BaseAnalyzer):
                 regime = "critical"
 
             results[var_name] = {
-                "Gamma": Gamma_fit,
-                "Gamma_err": Gamma_err,
-                "Lambda": Lambda_fit,
-                "Lambda_err": Lambda_err,
+                "gamma": gamma_fit,
+                "gamma_err": gamma_err,
+                "lambda_": lambda_fit,
+                "lambda_err": lambda_err,
                 "d": complex(np.sqrt(np.complex128(d_sq))),
                 "rho_0": rho0_fit,
                 "rho_0_err": rho0_err,
@@ -141,8 +147,8 @@ class QubitDecoherenceAnalyzer(BaseAnalyzer):
                 t, y_fit, "-",
                 label=(
                     f"fit ("
-                    f"\u0393={res['Gamma']:.4g}, "
-                    f"\u039b={res['Lambda']:.4g})"
+                    f"\u03b3={res['gamma']:.4g}, "
+                    f"\u03bb={res['lambda_']:.4g})"
                 ),
             )
             ax_top.set_ylabel(label)

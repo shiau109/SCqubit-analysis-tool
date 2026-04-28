@@ -6,19 +6,42 @@ import numpy as np
 from .function_fitting import FunctionFitting, register_fitter
 
 
-def decoherence_G(x, Gamma, Lambda):
+# ----------------------------------------------------------------------
+# Reparametrisation
+# ----------------------------------------------------------------------
+# The non-Markovian amplitude-damping channel is most naturally written in
+# terms of the Lindbladian rates (gamma, lambda_):
+#
+#     gamma    = 2 * Lambda                  (relaxation rate)
+#     lambda_  = sqrt(Gamma * Lambda / 2)    (coupling strength)
+#
+# which is equivalent to the older (Gamma, Lambda) form via
+#
+#     Lambda = gamma / 2
+#     Gamma  = 4 * lambda_**2 / gamma
+#
+# Public model functions and fitter parameters use (gamma, lambda_).
+# Internally we still compute G(t) using (Gamma, Lambda) since the closed
+# form was derived in those variables -- this keeps the math transparent.
+
+
+def decoherence_G(x, gamma, lambda_):
     """
     Non-Markovian amplitude-damping decoherence function G(t):
 
-        d = sqrt(Lambda * (Lambda - 2*Gamma))
-        G(t) = exp(-Lambda*t/2) [cosh(d*t/2) + (Lambda/d) sinh(d*t/2)]
+        Lambda = gamma / 2
+        d      = sqrt(Lambda**2 - 4*lambda_**2)
+        G(t)   = exp(-Lambda*t/2) [cosh(d*t/2) + (Lambda/d) sinh(d*t/2)]
 
-    The independent variable is named ``x`` (= time) for compatibility
-    with the FunctionFitting/lmfit convention.
-    Returns the real part (G is real for the standard parameter ranges).
+    Critical damping occurs at gamma = 4*lambda_ (d = 0).
+    The independent variable is named ``x`` (= time) for compatibility with
+    the FunctionFitting/lmfit convention.  Returns the real part (G is real
+    for the standard parameter ranges).
     """
     t = np.asarray(x, dtype=float)
-    d_sq = Lambda * (Lambda - 2 * Gamma)
+    Lambda = gamma / 2.0
+    # d^2 = Lambda^2 - 2*Gamma*Lambda = (gamma/2)^2 - 4*lambda_^2
+    d_sq = Lambda * Lambda - 4.0 * lambda_ * lambda_
     d = np.sqrt(np.complex128(d_sq))
     if np.abs(d) < 1e-15:
         # Critical-damping limit
@@ -31,15 +54,15 @@ def decoherence_G(x, Gamma, Lambda):
     return np.real(G).astype(float)
 
 
-def rho11_model(x, Gamma, Lambda, rho_0):
+def rho11_model(x, gamma, lambda_, rho_0):
     """rho_11(t) = |G(t)|^2 * rho_11(0)."""
-    G = decoherence_G(x, Gamma, Lambda)
+    G = decoherence_G(x, gamma, lambda_)
     return np.abs(G) ** 2 * rho_0
 
 
-def rho10_model(x, Gamma, Lambda, rho_0):
+def rho10_model(x, gamma, lambda_, rho_0):
     """rho_10(t) = G(t) * rho_10(0)."""
-    G = decoherence_G(x, Gamma, Lambda)
+    G = decoherence_G(x, gamma, lambda_)
     return G * rho_0
 
 
@@ -52,7 +75,8 @@ class FitQubitDecoherence(FunctionFitting):
         - 'rho_11' : |G(t)|^2 * rho_0
         - 'rho_10' :  G(t)   * rho_0
 
-    Input DataArray must have a coordinate named 'x' (time).
+    Fit parameters are (gamma, lambda_, rho_0).  Input DataArray must have a
+    coordinate named 'x' (time).
     """
 
     def __init__(self, data: DataArray = None, component: str = "rho_11"):
@@ -70,8 +94,8 @@ class FitQubitDecoherence(FunctionFitting):
         self.y = data.values.astype(float)
         self.x = data.coords["x"].values.astype(float)
 
-    def model_function(self, x, Gamma, Lambda, rho_0):
-        return self._model_fn(x, Gamma, Lambda, rho_0)
+    def model_function(self, x, gamma, lambda_, rho_0):
+        return self._model_fn(x, gamma, lambda_, rho_0)
 
     @staticmethod
     def _envelope_decay_time(t, y):
@@ -105,15 +129,20 @@ class FitQubitDecoherence(FunctionFitting):
         y = self.y
 
         tau_e = self._envelope_decay_time(t, y)
-        # At critical damping (Lambda = 2*Gamma), |G|^2 reaches 1/e near t ~ 1.7/Lambda.
-        # Use this as the central seed; multi-start in fit() spans the regimes.
+        # Build the initial guess in the (Gamma, Lambda) basis where the
+        # closed-form reasoning is simpler, then convert to (gamma, lambda_).
+        # At critical damping (Lambda = 2*Gamma) |G|^2 reaches 1/e near
+        # t ~ 1.7/Lambda.  Multi-start in fit() spans the regimes.
         Lambda_guess = 1.7 / max(tau_e, 1e-12)
         Gamma_guess = 0.5 * Lambda_guess  # critical-damping seed
+
+        gamma_guess = 2.0 * Lambda_guess
+        lambda_guess = float(np.sqrt(Gamma_guess * Lambda_guess / 2.0))
         rho0_guess = float(y[0])
 
         self.params = self.model.make_params(
-            Gamma=dict(value=Gamma_guess, min=0.0),
-            Lambda=dict(value=Lambda_guess, min=0.0),
+            gamma=dict(value=gamma_guess, min=0.0, max=0.02),
+            lambda_=dict(value=lambda_guess, min=0.0, max=0.02),
             rho_0=dict(value=rho0_guess),
         )
         return self.params
@@ -124,19 +153,24 @@ class FitQubitDecoherence(FunctionFitting):
         if self.params is None:
             self.guess()
 
-        Lambda0 = float(self.params['Lambda'].value)
+        # Recover Lambda0 from the current gamma seed and run multi-start over
+        # (Gamma, Lambda) ratios spanning all damping regimes.
+        gamma0 = float(self.params['gamma'].value)
         rho0 = float(self.params['rho_0'].value)
+        Lambda0 = gamma0 / 2.0  # Lambda = gamma / 2
 
-        # Multi-start grid along/around the critical line Lambda = 2*Gamma.
         # Gamma/Lambda ratios span deep-underdamped -> critical -> overdamped.
-        gamma_ratios = (0.05, 0.25, 0.5, 1.0, 2.0, 4.0)
+        gamma_over_Lambda_ratios = (0.3, 0.4, 0.5, 0.6, 0.7)
 
         best_result = None
         best_chi = np.inf
-        for r in gamma_ratios:
+        for r in gamma_over_Lambda_ratios:
+            Gamma_seed = r * Lambda0
+            gamma_seed = 2.0 * Lambda0  # = gamma0
+            lambda_seed = float(np.sqrt(Gamma_seed * Lambda0 / 2.0))
             seed = self.model.make_params(
-                Gamma=dict(value=r * Lambda0, min=0.0),
-                Lambda=dict(value=Lambda0, min=0.0),
+                gamma=dict(value=gamma_seed, min=0.0, max=0.02),
+                lambda_=dict(value=lambda_seed, min=0.0, max=0.02),
                 rho_0=dict(value=rho0),
             )
             try:
