@@ -160,7 +160,7 @@ class FitQubitDecoherence(FunctionFitting):
         Lambda0 = gamma0 / 2.0  # Lambda = gamma / 2
 
         # Gamma/Lambda ratios span deep-underdamped -> critical -> overdamped.
-        gamma_over_Lambda_ratios = (0.3, 0.4, 0.5, 0.6, 0.7)
+        gamma_over_Lambda_ratios = (0.5, 1.0, 1.5, 2)
 
         best_result = None
         best_chi = np.inf
@@ -169,9 +169,9 @@ class FitQubitDecoherence(FunctionFitting):
             gamma_seed = 2.0 * Lambda0  # = gamma0
             lambda_seed = float(np.sqrt(Gamma_seed * Lambda0 / 2.0))
             seed = self.model.make_params(
-                gamma=dict(value=gamma_seed, min=0.0, max=0.02),
+                gamma=dict(value=gamma_seed, min=0.0, max=0.01),
                 lambda_=dict(value=lambda_seed, min=0.0, max=0.02),
-                rho_0=dict(value=rho0),
+                rho_0=dict(value=rho0, min=-1.2, max=1.2),
             )
             try:
                 res = self.model.fit(self.y, seed, x=self.x)
