@@ -144,11 +144,13 @@ def run_hankel_per_freq(
         modes: list[dict[str, Any]] = []
         singular_values: np.ndarray | None = None
         reconstruction: np.ndarray | None = None
+        n_modes_svd: int = 0
         try:
             h_results, h_figs = analyzer.analyze(hankel_ds, **hk)
             for _f in h_figs.values():
                 plt.close(_f)
             modes = h_results.get("modes", [])
+            n_modes_svd = h_results.get("n_modes", len(modes))
             singular_values = h_results.get("singular_values")
             reconstruction = h_results.get("reconstruction")
             if modes:
@@ -161,7 +163,8 @@ def run_hankel_per_freq(
 
         out[float(f_val)] = {
             "Lambda_seed": Lambda_seed,
-            "n_modes": len(modes),
+            "n_modes": len(modes),       # physical modes after negative-freq filtering
+            "n_modes_svd": n_modes_svd,  # SVD rank from _select_n_modes (counts conjugate pairs)
             "modes": modes,
             "singular_values": singular_values,
             "reconstruction": reconstruction,

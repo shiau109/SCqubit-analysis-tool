@@ -98,10 +98,8 @@ class HankelAnalyzer(BaseAnalyzer):
             # Keep all modes up to (and including) the last index where r[i] > threshold.
             threshold = kwargs.get("threshold", 1.5)
             ratios = s[:10] / np.maximum(s[1:11], np.finfo(float).tiny)
-            print(np.where(ratios > threshold))
             above = np.where(ratios > threshold)[0]
             n_modes = int(above[-1]) + 1 if len(above) > 0 else 1
-            print(n_modes)
 
         elif method in ("aic", "mdl"):
             # Wax–Kailath information-theoretic model-order selection.
