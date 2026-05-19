@@ -31,7 +31,6 @@ from __future__ import annotations
 import warnings
 from typing import Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
@@ -191,9 +190,7 @@ def run_hankel_per_freq(
         reconstruction: np.ndarray | None = None
         n_modes_svd: int = 0
         try:
-            h_results, h_figs = analyzer.analyze(hankel_ds, **hk)
-            for _f in h_figs.values():
-                plt.close(_f)
+            h_results, _ = analyzer.analyze(hankel_ds, skip_figures=True, **hk)
             modes = h_results.get("modes", [])
             n_modes_svd = h_results.get("n_modes", len(modes))
             singular_values = h_results.get("singular_values")
@@ -402,11 +399,21 @@ def _run_analysis_stages(
 
     Returns a dict with keys ``hankel``, ``mdo``, ``decoh``, ``decoh_guesses``.
     """
+    if verbose:
+        print(f"[{qname}] stage 1/3: Hankel pre-analysis ...")
     hankel_diag = run_hankel_per_freq(
         rho_ds, tail_frac=tail_frac, hankel_kwargs=hankel_kwargs, label=qname
     )
+    if verbose:
+        print(f"[{qname}] stage 1/3: Hankel done")
+        print(f"[{qname}] stage 2/3: multi-damped-oscillation fit ...")
     mdo_res = run_mdo_per_freq(rho_ds, hankel_diag, tail_frac=tail_frac, label=qname)
+    if verbose:
+        print(f"[{qname}] stage 2/3: MDO done")
+        print(f"[{qname}] stage 3/3: decoherence fit ...")
     decoh_res, decoh_guesses = run_decoherence_per_freq(rho_ds, hankel_diag, label=qname)
+    if verbose:
+        print(f"[{qname}] stage 3/3: decoherence done")
 
     if verbose:
         n_freq = rho_ds.sizes.get("driving_frequency", 0)
@@ -424,6 +431,36 @@ def _run_analysis_stages(
         "decoh": decoh_res,
         "decoh_guesses": decoh_guesses,
     }
+
+
+def _prepare_entries_exp(
+    h5_path: str,
+    *,
+    rho11_offset: float = DEFAULT_RHO11_OFFSET,
+    rho11_scale: float = DEFAULT_RHO11_SCALE,
+    repetition_dim: str = "qubit",
+) -> list[dict[str, Any]]:
+    """Load an experimental HDF5 file and return a list of ``{qubit_name, sq_data, rho_ds}`` dicts."""
+    qubit_datasets = load_and_split(h5_path, repetition_dim=repetition_dim)
+    return [
+        {
+            "qubit_name": _qubit_label(sq_data, fallback=f"Dataset_{i}"),
+            "sq_data": sq_data,
+            "rho_ds": build_rho_dataset(sq_data, rho11_offset=rho11_offset, rho11_scale=rho11_scale),
+        }
+        for i, sq_data in enumerate(qubit_datasets)
+    ]
+
+
+def _prepare_entries_sim(h5_path: str) -> list[dict[str, Any]]:
+    """Load a simulation HDF5 file and return a single-entry list of ``{qubit_name, sq_data, rho_ds}``."""
+    return [{"qubit_name": "simulation", "sq_data": None, "rho_ds": _load_sim_rho_dataset(h5_path)}]
+
+
+_ENTRY_LOADERS = {
+    "exp": _prepare_entries_exp,
+    "sim": _prepare_entries_sim,
+}
 
 
 def analyze(
@@ -456,58 +493,28 @@ def analyze(
         ``decoh``, ``decoh_guesses``.
         ``sq_data`` is ``None`` for simulation data.
     """
+    if mode not in _ENTRY_LOADERS:
+        raise ValueError(f"Unknown mode {mode!r}. Expected 'exp' or 'sim'.")
+
+    loader_kwargs: dict[str, Any] = {}
     if mode == "exp":
-        qubit_datasets = load_and_split(h5_path, repetition_dim=repetition_dim)
-        results: list[dict[str, Any]] = []
-        for i, sq_data in enumerate(qubit_datasets):
-            qname = _qubit_label(sq_data, fallback=f"Dataset_{i}")
-            rho_ds = build_rho_dataset(
-                sq_data,
-                rho11_offset=rho11_offset,
-                rho11_scale=rho11_scale,
-            )
-            stages = _run_analysis_stages(
-                rho_ds, qname,
+        loader_kwargs = {"rho11_offset": rho11_offset, "rho11_scale": rho11_scale, "repetition_dim": repetition_dim}
+    if verbose:
+        print(f"[loading] {h5_path} (mode={mode!r}) ...")
+    entries = _ENTRY_LOADERS[mode](h5_path, **loader_kwargs)
+    if verbose:
+        print(f"[loading] done — {len(entries)} qubit(s) found")
+
+    return [
+        {
+            **entry,
+            **_run_analysis_stages(
+                entry["rho_ds"], entry["qubit_name"],
                 tail_frac=tail_frac,
                 hankel_kwargs=hankel_kwargs,
                 verbose=verbose,
-            )
-            results.append({"qubit_name": qname, "sq_data": sq_data, "rho_ds": rho_ds, **stages})
-        return results
+            ),
+        }
+        for entry in entries
+    ]
 
-    elif mode == "sim":
-        rho_ds = _load_sim_rho_dataset(h5_path)
-        qname = "simulation"
-        stages = _run_analysis_stages(
-            rho_ds, qname,
-            tail_frac=tail_frac,
-            hankel_kwargs=hankel_kwargs,
-            verbose=verbose,
-        )
-        return [{"qubit_name": qname, "sq_data": None, "rho_ds": rho_ds, **stages}]
-
-    else:
-        raise ValueError(f"Unknown mode {mode!r}. Expected 'exp' or 'sim'.")
-
-
-def analyze_file(
-    h5_path: str,
-    *,
-    rho11_offset: float = DEFAULT_RHO11_OFFSET,
-    rho11_scale: float = DEFAULT_RHO11_SCALE,
-    tail_frac: float = DEFAULT_TAIL_FRAC,
-    hankel_kwargs: dict[str, Any] | None = None,
-    repetition_dim: str = "qubit",
-    verbose: bool = True,
-) -> list[dict[str, Any]]:
-    """Backward-compatible alias for ``analyze(h5_path, mode='exp')``."""
-    return analyze(
-        h5_path,
-        mode="exp",
-        rho11_offset=rho11_offset,
-        rho11_scale=rho11_scale,
-        tail_frac=tail_frac,
-        hankel_kwargs=hankel_kwargs,
-        repetition_dim=repetition_dim,
-        verbose=verbose,
-    )
