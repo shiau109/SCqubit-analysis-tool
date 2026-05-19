@@ -72,6 +72,116 @@ def plot_2d_spectrum(results: dict) -> plt.Figure:
     return fig
 
 
+def plot_2d_spectrum_with_fit(results: dict) -> plt.Figure:
+    """
+    Plot the FFT spectrum as a 2D colour-map with |cos| fit overlay.
+
+    Like plot_2d_spectrum but replaces the f_1/f_2 scatter dots with the
+    |cos| fit curve plotted as continuous lines (f_c ± fit_curve) vs cg_fine.
+
+    Parameters
+    ----------
+    results : dict
+        Output of ChargeGateRamseyAnalyzer.extract_parameters.
+    """
+    _FIG_WIDTH = 3.0
+    _FIG_HEIGHT = 2.0
+    _rc = {
+        "figure.figsize": (_FIG_WIDTH, _FIG_HEIGHT),
+        "figure.dpi": 300,
+        "font.size": 10,
+        "axes.labelsize": 10,
+        "legend.fontsize": 10,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "DejaVu Serif", "serif"],
+        "text.usetex": False,
+        "mathtext.fontset": "stix",
+        "lines.linewidth": 1.5,
+        "lines.markersize": 4,
+        "xtick.direction": "in",
+        "ytick.direction": "in",
+        "xtick.top": True,
+        "ytick.right": True,
+        "xtick.major.size": 3,
+        "ytick.major.size": 3,
+        "xtick.minor.size": 2.5,
+        "ytick.minor.size": 2.5,
+    }
+    with plt.rc_context(_rc):
+        return _plot_2d_spectrum_with_fit_inner(results)
+
+
+def _plot_2d_spectrum_with_fit_inner(results: dict) -> plt.Figure:
+    # FIG_WIDTH = 3.8
+    # FIG_HEIGHT = 2.6
+    # plt.rcParams.update({
+    #     "figure.figsize": (FIG_WIDTH, FIG_HEIGHT),
+    #     "figure.dpi": 300,
+    #     "font.size": 10,
+    #     "axes.labelsize": 10,
+    #     "legend.fontsize": 10,
+    #     "xtick.labelsize": 10,
+    #     "ytick.labelsize": 10,
+    #     "font.family": "serif",
+    #     "text.usetex": True,
+    #     "mathtext.fontset": "stix",
+    #     "lines.linewidth": 1.5,
+    #     "lines.markersize": 4,
+    #     "xtick.direction": "in",
+    #     "ytick.direction": "in",
+    #     "xtick.top": True,
+    #     "ytick.right": True,
+    #     "xtick.major.size": 3,
+    #     "ytick.major.size": 3,
+    #     "xtick.minor.size": 2.5,
+    #     "ytick.minor.size": 2.5,
+    # })
+    fig, ax = plt.subplots()
+
+    spectrum_ds = results.get('spectrum_dataset')
+    if spectrum_ds is None:
+        ax.text(0.5, 0.5, 'No spectrum data', transform=ax.transAxes, ha='center')
+        fig.tight_layout()
+        plt.close(fig)
+        return fig
+
+    freq = spectrum_ds.coords['frequency'].values
+    charge_gate = spectrum_ds.coords['charge_gate'].values
+    X, Y = np.meshgrid(charge_gate, freq)
+
+    im = ax.pcolormesh(X, Y, spectrum_ds['spectrum'].values.T, shading='auto', cmap='Purples')
+    # plt.colorbar(im, ax=ax, label='Spectrum Amplitude')
+
+    # Overlay |cos| fit as f_c ± fit_curve lines
+    abscos_params = results.get('abscos_params')
+    cg = results['charge_gates']
+    if abscos_params is not None and abscos_params.get('success', False):
+        amp = abscos_params['amplitude']
+        fit_freq = abscos_params['frequency']
+        phase = abscos_params['phase']
+        f_c = results['f_c']
+
+        cg_fine = np.linspace(cg.min(), cg.max(), 200)
+        fit_curve = amp * np.cos(2 * np.pi * fit_freq * (cg_fine - phase))
+        # fit_curve_m = -amp * np.cos(2 * np.pi * fit_freq * (cg_fine - phase))
+        ax.plot(cg_fine, f_c + fit_curve, 'r--', linewidth=1, alpha=0.7, label='Even')
+        ax.plot(cg_fine, f_c - fit_curve, 'b--', linewidth=1, alpha=0.7, label='Odd')
+
+    ax.set_xlabel('$n_g$ (2e)', fontfamily='serif')
+    ax.set_ylabel('Detuning (MHz)', fontfamily='serif')
+    # ax.legend(loc='upper right', framealpha=0.8)
+    # ax.set_title('FFT Spectrum vs Charge Gate (|cos| fit overlay)')
+    if len(freq) > 1:
+        ax.set_ylim(0, freq[-1] / 1.5)
+
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    plt.close(fig)
+    return fig
+
+
 def plot_1d_frequencies(results: dict) -> plt.Figure:
     """
     Plot |f_1 − f_c| and |f_2 − f_c| vs charge_gate with |cos| fit overlay.

@@ -104,6 +104,51 @@ def build_rho_dataset(
     return rho_ds.squeeze(drop=True)
 
 
+def _load_sim_rho_dataset(h5_path: str) -> xr.Dataset:
+    """Load a QuTiP simulation HDF5 file and return a density-matrix dataset.
+
+    Expected file layout
+    --------------------
+    * ``all_expect`` : shape ``(n_freq, n_time, 4)``
+
+      - channel 0 : excited-state population ρ₁₁
+      - channel 1 : ⟨σx⟩  →  rho_10_re = ⟨σx⟩ / 2
+      - channel 2 : ⟨σy⟩  →  rho_10_im = ⟨σy⟩ / 2
+      - channel 3 : resonator photon number ⟨a†a⟩
+
+    * ``omega_flux_vals`` : shape ``(n_freq,)``  — driving-frequency axis
+    * ``tlist``           : shape ``(n_time,)``  — time axis
+    * root attrs          : simulation parameters (stored in dataset ``.attrs``)
+
+    Returns an ``xr.Dataset`` with coords ``driving_frequency``, ``driving_time``
+    and variables ``rho_11``, ``rho_10_re``, ``rho_10_im``, ``photon_num``.
+    """
+    import h5py
+
+    with h5py.File(h5_path, "r") as f:
+        omega_flux_vals = f["omega_flux_vals"][()]
+        tlist = f["tlist"][()]
+        all_expect = f["all_expect"][()]
+        sim_attrs = {
+            k: (v.decode() if isinstance(v, bytes) else v)
+            for k, v in f.attrs.items()
+        }
+
+    return xr.Dataset(
+        {
+            "rho_11":     (["driving_frequency", "driving_time"], all_expect[:, :, 0]),
+            "rho_10_re":  (["driving_frequency", "driving_time"], all_expect[:, :, 1] / 2.0),
+            "rho_10_im":  (["driving_frequency", "driving_time"], all_expect[:, :, 2] / 2.0),
+            "photon_num": (["driving_frequency", "driving_time"], all_expect[:, :, 3]),
+        },
+        coords={
+            "driving_frequency": omega_flux_vals,
+            "driving_time":      tlist,
+        },
+        attrs=sim_attrs,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Per-frequency analysis stages
 # ---------------------------------------------------------------------------
@@ -345,6 +390,106 @@ def _qubit_label(sq_data: xr.Dataset, fallback: str) -> str:
     return fallback
 
 
+def _run_analysis_stages(
+    rho_ds: xr.Dataset,
+    qname: str,
+    *,
+    tail_frac: float = DEFAULT_TAIL_FRAC,
+    hankel_kwargs: dict[str, Any] | None = None,
+    verbose: bool = True,
+) -> dict[str, Any]:
+    """Run Hankel → MDO → decoherence on a pre-built ``rho_ds``.
+
+    Returns a dict with keys ``hankel``, ``mdo``, ``decoh``, ``decoh_guesses``.
+    """
+    hankel_diag = run_hankel_per_freq(
+        rho_ds, tail_frac=tail_frac, hankel_kwargs=hankel_kwargs, label=qname
+    )
+    mdo_res = run_mdo_per_freq(rho_ds, hankel_diag, tail_frac=tail_frac, label=qname)
+    decoh_res, decoh_guesses = run_decoherence_per_freq(rho_ds, hankel_diag, label=qname)
+
+    if verbose:
+        n_freq = rho_ds.sizes.get("driving_frequency", 0)
+        n_mdo_ok = sum(1 for v in mdo_res.values() if v is not None and v.get("success"))
+        n_decoh_ok = sum(1 for v in decoh_res.values() if v is not None)
+        print(
+            f"[{qname}] freqs={n_freq}"
+            f"  hankel_seeded={sum(1 for d in hankel_diag.values() if d['Lambda_seed'] is not None)}"
+            f"  mdo_ok={n_mdo_ok}  decoh_ok={n_decoh_ok}"
+        )
+
+    return {
+        "hankel": hankel_diag,
+        "mdo": mdo_res,
+        "decoh": decoh_res,
+        "decoh_guesses": decoh_guesses,
+    }
+
+
+def analyze(
+    h5_path: str,
+    mode: str = "exp",
+    *,
+    rho11_offset: float = DEFAULT_RHO11_OFFSET,
+    rho11_scale: float = DEFAULT_RHO11_SCALE,
+    tail_frac: float = DEFAULT_TAIL_FRAC,
+    hankel_kwargs: dict[str, Any] | None = None,
+    repetition_dim: str = "qubit",
+    verbose: bool = True,
+) -> list[dict[str, Any]]:
+    """Run the full EP → ρ₁₁ decoherence pipeline on one HDF5 file.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the HDF5 file.
+    mode : {"exp", "sim"}
+        ``"exp"`` — experimental tomography file (Qualibrate / xarray HDF5).
+        ``"sim"`` — QuTiP simulation file with ``all_expect`` / ``omega_flux_vals``
+        / ``tlist`` datasets.
+
+    Returns
+    -------
+    list[dict]
+        One entry per qubit (``"exp"``) or a single entry (``"sim"``), each with
+        keys ``qubit_name``, ``sq_data``, ``rho_ds``, ``hankel``, ``mdo``,
+        ``decoh``, ``decoh_guesses``.
+        ``sq_data`` is ``None`` for simulation data.
+    """
+    if mode == "exp":
+        qubit_datasets = load_and_split(h5_path, repetition_dim=repetition_dim)
+        results: list[dict[str, Any]] = []
+        for i, sq_data in enumerate(qubit_datasets):
+            qname = _qubit_label(sq_data, fallback=f"Dataset_{i}")
+            rho_ds = build_rho_dataset(
+                sq_data,
+                rho11_offset=rho11_offset,
+                rho11_scale=rho11_scale,
+            )
+            stages = _run_analysis_stages(
+                rho_ds, qname,
+                tail_frac=tail_frac,
+                hankel_kwargs=hankel_kwargs,
+                verbose=verbose,
+            )
+            results.append({"qubit_name": qname, "sq_data": sq_data, "rho_ds": rho_ds, **stages})
+        return results
+
+    elif mode == "sim":
+        rho_ds = _load_sim_rho_dataset(h5_path)
+        qname = "simulation"
+        stages = _run_analysis_stages(
+            rho_ds, qname,
+            tail_frac=tail_frac,
+            hankel_kwargs=hankel_kwargs,
+            verbose=verbose,
+        )
+        return [{"qubit_name": qname, "sq_data": None, "rho_ds": rho_ds, **stages}]
+
+    else:
+        raise ValueError(f"Unknown mode {mode!r}. Expected 'exp' or 'sim'.")
+
+
 def analyze_file(
     h5_path: str,
     *,
@@ -355,52 +500,14 @@ def analyze_file(
     repetition_dim: str = "qubit",
     verbose: bool = True,
 ) -> list[dict[str, Any]]:
-    """Run the full EP tomography → ρ₁₁ decoherence pipeline on one HDF5 file.
-
-    Returns a list (one entry per qubit) with keys:
-    ``qubit_name``, ``sq_data``, ``rho_ds``, ``hankel``, ``mdo``,
-    ``decoh``, ``decoh_guesses``.
-    """
-    qubit_datasets = load_and_split(h5_path, repetition_dim=repetition_dim)
-    results: list[dict[str, Any]] = []
-
-    for i, sq_data in enumerate(qubit_datasets):
-        qname = _qubit_label(sq_data, fallback=f"Dataset_{i}")
-
-        rho_ds = build_rho_dataset(
-            sq_data,
-            rho11_offset=rho11_offset,
-            rho11_scale=rho11_scale,
-        )
-
-        hankel_diag = run_hankel_per_freq(
-            rho_ds,
-            tail_frac=tail_frac,
-            hankel_kwargs=hankel_kwargs,
-            label=qname,
-        )
-        mdo_res = run_mdo_per_freq(rho_ds, hankel_diag, tail_frac=tail_frac, label=qname)
-        decoh_res, decoh_guesses = run_decoherence_per_freq(rho_ds, hankel_diag, label=qname)
-
-        if verbose:
-            n_freq = rho_ds.sizes.get("driving_frequency", 0)
-            n_mdo_ok = sum(1 for v in mdo_res.values() if v is not None and v.get("success"))
-            n_decoh_ok = sum(1 for v in decoh_res.values() if v is not None)
-            print(
-                f"[{qname}] freqs={n_freq}  hankel_seeded={sum(1 for d in hankel_diag.values() if d['Lambda_seed'] is not None)}"
-                f"  mdo_ok={n_mdo_ok}  decoh_ok={n_decoh_ok}"
-            )
-
-        results.append(
-            {
-                "qubit_name": qname,
-                "sq_data": sq_data,
-                "rho_ds": rho_ds,
-                "hankel": hankel_diag,
-                "mdo": mdo_res,
-                "decoh": decoh_res,
-                "decoh_guesses": decoh_guesses,
-            }
-        )
-
-    return results
+    """Backward-compatible alias for ``analyze(h5_path, mode='exp')``."""
+    return analyze(
+        h5_path,
+        mode="exp",
+        rho11_offset=rho11_offset,
+        rho11_scale=rho11_scale,
+        tail_frac=tail_frac,
+        hankel_kwargs=hankel_kwargs,
+        repetition_dim=repetition_dim,
+        verbose=verbose,
+    )

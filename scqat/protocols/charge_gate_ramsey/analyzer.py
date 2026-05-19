@@ -10,6 +10,7 @@ from scqat.math_tools.fit_abscos import FitAbsCos
 from scqat.protocols.charge_gate_ramsey.visualization import (
     plot_raw_2d_colormap,
     plot_2d_spectrum,
+    plot_2d_spectrum_with_fit,
     plot_1d_frequencies,
 )
 
@@ -151,6 +152,7 @@ class ChargeGateRamseyAnalyzer(BaseAnalyzer):
 
         figs['raw_colormap'] = plot_raw_2d_colormap(dataset)
         figs['fft_spectrum'] = plot_2d_spectrum(results)
+        figs['fft_spectrum_with_fit'] = plot_2d_spectrum_with_fit(results)
         figs['freq_vs_charge_gate'] = plot_1d_frequencies(results)
 
         return figs
