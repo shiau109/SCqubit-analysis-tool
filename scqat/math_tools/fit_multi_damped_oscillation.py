@@ -22,7 +22,7 @@ from xarray import DataArray
 from lmfit import Model
 from lmfit.model import ModelResult
 
-from .function_fitting import FunctionFitting, register_fitter
+from .function_fitting import FunctionFitting, register_fitter, parse_xy
 
 
 def _multi_damped_osc(x, params_dict, n_modes):
@@ -74,12 +74,12 @@ class FitMultiDampedOscillation(FunctionFitting):
         format produced by :class:`HankelAnalyzer`).
     """
 
-    def __init__(self, data: DataArray = None, modes: List[Dict[str, Any]] = None):
+    def __init__(self, data: DataArray = None, modes: List[Dict[str, Any]] = None, x=None):
         if modes is None or len(modes) == 0:
             raise ValueError("FitMultiDampedOscillation requires at least one mode.")
         self.modes = list(modes)
         self.n_modes = len(self.modes)
-        self._data_parser(data)
+        self._data_parser(data, x)
 
         # Build a lmfit Model with a dynamic parameter list.
         param_names = []
@@ -105,11 +105,8 @@ class FitMultiDampedOscillation(FunctionFitting):
         self.model = Model(_model_fn, independent_vars=["x"])
         self.params = None
 
-    def _data_parser(self, data: DataArray):
-        if not isinstance(data, DataArray):
-            raise ValueError("Input data must be an xarray.DataArray.")
-        self.y = data.values.astype(float)
-        self.x = data.coords["x"].values.astype(float)
+    def _data_parser(self, data: DataArray, x=None):
+        self.x, self.y = parse_xy(data, x)
 
     def model_function(self, x, **kwargs):
         return _multi_damped_osc(x, kwargs, self.n_modes)
@@ -141,9 +138,9 @@ class FitMultiDampedOscillation(FunctionFitting):
         self.params = self.model.make_params(**seeds)
         return self.params
 
-    def fit(self, data: DataArray = None) -> ModelResult:
+    def fit(self, data: DataArray = None, x=None) -> ModelResult:
         if data is not None:
-            self._data_parser(data)
+            self._data_parser(data, x)
         if self.params is None:
             self.guess()
         self.result = self.model.fit(self.y, self.params, x=self.x)

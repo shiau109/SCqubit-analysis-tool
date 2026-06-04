@@ -5,7 +5,7 @@ from numpy import cos, abs, exp, max, min, mean, pi, nan
 from numpy import fft, asarray
 from scipy.signal import find_peaks
 
-from .function_fitting import FunctionFitting, register_fitter
+from .function_fitting import FunctionFitting, register_fitter, parse_xy
 
 
 @register_fitter('damping_beat')
@@ -22,16 +22,13 @@ class FitDampingBeat(FunctionFitting):
     Input DataArray must have a coordinate named 'x'.
     """
 
-    def __init__(self, data: DataArray = None):
-        self._data_parser(data)
+    def __init__(self, data: DataArray = None, x=None):
+        self._data_parser(data, x)
         self.model = Model(self.model_function)
         self.params = None
 
-    def _data_parser(self, data: DataArray):
-        if not isinstance(data, DataArray):
-            raise ValueError("Input data must be an xarray.DataArray.")
-        self.y = data.values
-        self.x = data.coords["x"].values
+    def _data_parser(self, data: DataArray, x=None):
+        self.x, self.y = parse_xy(data, x)
 
     def model_function(self, x, a_1, kappa_1, f_1, phi_1, a_2, kappa_2, f_2, phi_2, c):
         return (
@@ -109,9 +106,9 @@ class FitDampingBeat(FunctionFitting):
         )
         return self.params
 
-    def fit(self, data: DataArray = None) -> ModelResult:
+    def fit(self, data: DataArray = None, x=None) -> ModelResult:
         if data is not None:
-            self._data_parser(data)
+            self._data_parser(data, x)
         if self.params is None:
             self.guess()
         result = self.model.fit(self.y, self.params, x=self.x)

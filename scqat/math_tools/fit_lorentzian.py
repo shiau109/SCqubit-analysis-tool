@@ -3,7 +3,7 @@ from lmfit import Model
 from lmfit.model import ModelResult
 import numpy as np
 
-from .function_fitting import FunctionFitting, register_fitter
+from .function_fitting import FunctionFitting, register_fitter, parse_xy
 
 
 def lorentzian(x, x0, amplitude, gamma, offset):
@@ -35,18 +35,15 @@ class FitLorentzian(FunctionFitting):
         ``{'x0': (xmin, xmax), 'gamma': (0, gamma_max)}``.
     """
 
-    def __init__(self, data: DataArray = None, inverted: bool = False, bounds: dict = None):
-        self._data_parser(data)
+    def __init__(self, data: DataArray = None, inverted: bool = False, bounds: dict = None, x=None):
+        self._data_parser(data, x)
         self.inverted = inverted
         self.bounds = bounds or {}
         self.model = Model(self.model_function)
         self.params = None
 
-    def _data_parser(self, data: DataArray):
-        if not isinstance(data, DataArray):
-            raise ValueError("Input data must be an xarray.DataArray.")
-        self.y = data.values.astype(float)
-        self.x = data.coords["x"].values.astype(float)
+    def _data_parser(self, data: DataArray, x=None):
+        self.x, self.y = parse_xy(data, x)
 
     @staticmethod
     def model_function(x, x0, amplitude, gamma, offset):
@@ -93,9 +90,9 @@ class FitLorentzian(FunctionFitting):
         )
         return self.params
 
-    def fit(self, data: DataArray = None) -> ModelResult:
+    def fit(self, data: DataArray = None, x=None) -> ModelResult:
         if data is not None:
-            self._data_parser(data)
+            self._data_parser(data, x)
         if self.params is None:
             self.guess()
         result = self.model.fit(self.y, self.params, x=self.x)

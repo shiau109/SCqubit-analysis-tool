@@ -45,7 +45,14 @@ class TestFitAbsCos:
         assert result.params['amplitude'].value == pytest.approx(amp, rel=0.15)
         assert result.params['frequency'].value == pytest.approx(freq, rel=0.15)
 
-    def test_rejects_non_dataarray(self):
-        """Should raise ValueError if input is not a DataArray."""
-        with pytest.raises(ValueError, match="xarray.DataArray"):
-            FitAbsCos(np.array([1, 2, 3]))
+    def test_accepts_raw_array(self):
+        """A bare y array is accepted; x defaults to the sample index."""
+        fitter = FitAbsCos(np.array([1.0, 2.0, 3.0]))
+        assert np.allclose(fitter.x, [0, 1, 2])
+        assert np.allclose(fitter.y, [1.0, 2.0, 3.0])
+
+    def test_accepts_raw_xy(self):
+        """Raw (x, y) arrays are accepted without wrapping in a DataArray."""
+        x = np.linspace(0.0, 1.0, 3)
+        fitter = FitAbsCos(np.array([1.0, 2.0, 3.0]), x=x)
+        assert np.allclose(fitter.x, x)

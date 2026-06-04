@@ -4,7 +4,7 @@ from lmfit.model import ModelResult
 from numpy import cos, abs, exp, max, min, mean, argmax, pi
 from numpy import fft
 
-from .function_fitting import FunctionFitting, register_fitter
+from .function_fitting import FunctionFitting, register_fitter, parse_xy
 
 
 @register_fitter('damped_oscillation')
@@ -16,16 +16,13 @@ class FitDampedOscillation(FunctionFitting):
     Input DataArray must have a coordinate named 'x'.
     """
 
-    def __init__(self, data: DataArray = None):
-        self._data_parser(data)
+    def __init__(self, data: DataArray = None, x=None):
+        self._data_parser(data, x)
         self.model = Model(self.model_function)
         self.params = None
 
-    def _data_parser(self, data: DataArray):
-        if not isinstance(data, DataArray):
-            raise ValueError("Input data must be an xarray.DataArray.")
-        self.y = data.values
-        self.x = data.coords["x"].values
+    def _data_parser(self, data: DataArray, x=None):
+        self.x, self.y = parse_xy(data, x)
 
     def model_function(self, x, a, kappa, f, phi, c):
         return a * exp(-kappa * x) * cos(2 * pi * f * x + phi) + c
@@ -64,9 +61,9 @@ class FitDampedOscillation(FunctionFitting):
         )
         return self.params
 
-    def fit(self, data: DataArray = None) -> ModelResult:
+    def fit(self, data: DataArray = None, x=None) -> ModelResult:
         if data is not None:
-            self._data_parser(data)
+            self._data_parser(data, x)
         if self.params is None:
             self.guess()
         result = self.model.fit(self.y, self.params, x=self.x)

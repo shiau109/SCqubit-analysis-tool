@@ -50,6 +50,10 @@ class TestFitLorentzian:
         fitter = get_fitter('lorentzian', data=da)
         assert isinstance(fitter, FitLorentzian)
 
-    def test_rejects_non_dataarray(self):
-        with pytest.raises(ValueError, match="xarray.DataArray"):
-            FitLorentzian(np.array([1, 2, 3]))
+    def test_accepts_raw_xy(self):
+        """Raw (x, y) arrays are accepted without wrapping in a DataArray."""
+        x = np.linspace(0.0, 1.0, 5)
+        y = np.array([1.0, 2.0, 3.0, 2.0, 1.0])
+        fitter = FitLorentzian(y, x=x)
+        assert np.allclose(fitter.x, x)
+        assert np.allclose(fitter.y, y)

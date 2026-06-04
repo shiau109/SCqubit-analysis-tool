@@ -3,7 +3,7 @@ from lmfit import Model
 from lmfit.model import ModelResult
 import numpy as np
 
-from .function_fitting import FunctionFitting, register_fitter
+from .function_fitting import FunctionFitting, register_fitter, parse_xy
 
 
 # ----------------------------------------------------------------------
@@ -81,21 +81,18 @@ class FitQubitDecoherence(FunctionFitting):
     coordinate named 'x' (time).
     """
 
-    def __init__(self, data: DataArray = None, component: str = "rho_11", fix_delta: bool = False):
+    def __init__(self, data: DataArray = None, component: str = "rho_11", fix_delta: bool = False, x=None):
         if component not in ("rho_11", "rho_10"):
             raise ValueError("component must be 'rho_11' or 'rho_10'.")
         self.component = component
         self.fix_delta = fix_delta
-        self._data_parser(data)
+        self._data_parser(data, x)
         self._model_fn = rho11_model if component == "rho_11" else rho10_model
         self.model = Model(self._model_fn)
         self.params = None
 
-    def _data_parser(self, data: DataArray):
-        if not isinstance(data, DataArray):
-            raise ValueError("Input data must be an xarray.DataArray.")
-        self.y = data.values.astype(float)
-        self.x = data.coords["x"].values.astype(float)
+    def _data_parser(self, data: DataArray, x=None):
+        self.x, self.y = parse_xy(data, x)
 
     def model_function(self, x, gamma, lambda_, Delta, rho_0):
         return self._model_fn(x, gamma, lambda_, Delta, rho_0)
@@ -152,9 +149,9 @@ class FitQubitDecoherence(FunctionFitting):
         )
         return self.params
 
-    def fit(self, data: DataArray = None) -> ModelResult:
+    def fit(self, data: DataArray = None, x=None) -> ModelResult:
         if data is not None:
-            self._data_parser(data)
+            self._data_parser(data, x)
         if self.params is None:
             self.guess()
 

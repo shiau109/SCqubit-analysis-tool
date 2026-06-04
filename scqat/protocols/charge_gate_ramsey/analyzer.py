@@ -1,5 +1,4 @@
-import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 import xarray as xr
@@ -146,16 +145,85 @@ class ChargeGateRamseyAnalyzer(BaseAnalyzer):
             'abscos_params': abscos_params,
         }
 
-    def generate_figures(
+    def build_plot_data(
         self, dataset: xr.Dataset, results: Dict[str, Any], **kwargs
+    ) -> xr.Dataset:
+        """
+        Assemble every array the four figures need into a single self-sufficient
+        Dataset, so the plots can be reconstructed downstream with no
+        recalculation.
+
+        Variables: ``raw_signal`` (charge_gate, idle_time), ``spectrum``
+        (charge_gate, frequency), ``f_1``/``f_2`` (charge_gate), and the
+        pre-evaluated |cos| fit curves ``fit_curve_even``/``fit_curve_odd``/
+        ``fit_abscos`` (cg_fine).  The centre frequency and |cos| fit parameters
+        live in ``.attrs`` (``f_c``, ``abscos_*``, ``has_spectrum``, ``has_fit``).
+        """
+        charge_gates = np.asarray(results['charge_gates'], dtype=float)
+        idle_time = dataset.coords['idle_time'].values
+
+        coords: Dict[str, Any] = {
+            'charge_gate': charge_gates,
+            'idle_time': idle_time,
+        }
+        data_vars: Dict[str, Any] = {
+            'raw_signal': (['charge_gate', 'idle_time'], np.asarray(dataset['signal'].values)),
+            'f_1': ('charge_gate', np.asarray(results['f_1'], dtype=float)),
+            'f_2': ('charge_gate', np.asarray(results['f_2'], dtype=float)),
+        }
+        f_c = float(results['f_c'])
+        attrs: Dict[str, Any] = {'f_c': f_c}
+
+        spectrum_ds = results.get('spectrum_dataset')
+        if spectrum_ds is not None:
+            coords['frequency'] = spectrum_ds.coords['frequency'].values
+            data_vars['spectrum'] = (
+                ['charge_gate', 'frequency'], spectrum_ds['spectrum'].values
+            )
+            attrs['has_spectrum'] = 1
+        else:
+            attrs['has_spectrum'] = 0
+
+        abscos = results.get('abscos_params')
+        if abscos is not None and abscos.get('success', False):
+            amp = float(abscos['amplitude'])
+            fit_freq = float(abscos['frequency'])
+            phase = float(abscos['phase'])
+            cg_fine = np.linspace(charge_gates.min(), charge_gates.max(), 200)
+            curve = amp * np.cos(2 * np.pi * fit_freq * (cg_fine - phase))
+            coords['cg_fine'] = cg_fine
+            data_vars['fit_curve_even'] = ('cg_fine', f_c + curve)
+            data_vars['fit_curve_odd'] = ('cg_fine', f_c - curve)
+            data_vars['fit_abscos'] = ('cg_fine', np.abs(curve))
+            attrs.update({
+                'has_fit': 1,
+                'abscos_amplitude': amp,
+                'abscos_frequency': fit_freq,
+                'abscos_phase': phase,
+                'abscos_redchi': float(abscos.get('redchi', np.nan)),
+            })
+        else:
+            attrs['has_fit'] = 0
+
+        return xr.Dataset(data_vars, coords=coords, attrs=attrs)
+
+    def generate_figures(
+        self,
+        dataset: xr.Dataset,
+        results: Dict[str, Any],
+        plot_data: Optional[xr.Dataset] = None,
+        **kwargs,
     ) -> Dict[str, plt.Figure]:
+        # Draw strictly from plot_data so the figures stay reconstructable
+        # downstream; rebuild it only when called outside analyze().
+        if plot_data is None:
+            plot_data = self.build_plot_data(dataset, results)
+
         figs: Dict[str, plt.Figure] = {}
-
-        figs['raw_colormap'] = plot_raw_2d_colormap(dataset)
-        figs['fft_spectrum'] = plot_2d_spectrum(results)
-        figs['fft_spectrum_with_fit'] = plot_2d_spectrum_with_fit(results)
-        figs['freq_vs_charge_gate'] = plot_1d_frequencies(results)
-
+        figs['raw_colormap'] = plot_raw_2d_colormap(plot_data)
+        figs['fft_spectrum'] = plot_2d_spectrum(plot_data)
+        figs['fft_spectrum_with_fit'] = plot_2d_spectrum_with_fit(plot_data)
+        figs['freq_vs_charge_gate'] = plot_1d_frequencies(plot_data)
         return figs
 
     # ------------------------------------------------------------------
@@ -207,19 +275,6 @@ class ChargeGateRamseyAnalyzer(BaseAnalyzer):
             'fit_curve_even': fit_curve_even,
             'fit_curve_odd': fit_curve_odd,
         }
-
-    def save_metadata(self, results: Dict[str, Any], output_dir: str) -> None:
-        """Save the full results pickle and the lightweight plot-payload h5."""
-        super().save_metadata(results, output_dir)
-        try:
-            import h5py
-            payload = self.build_plot_payload(results)
-            h5_path = os.path.join(output_dir, f"{self.protocol_name}_plot_payload.h5")
-            with h5py.File(h5_path, 'w') as f:
-                for key, arr in payload.items():
-                    f.create_dataset(key, data=arr)
-        except Exception:
-            pass
 
     # ------------------------------------------------------------------
     # Private helpers
