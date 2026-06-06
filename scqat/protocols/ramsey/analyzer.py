@@ -152,7 +152,9 @@ class RamseyAnalyzer(BaseAnalyzer):
         plot_data: Optional[xr.Dataset] = None,
         **kwargs,
     ) -> Dict[str, plt.Figure]:
-        """Generate time-domain fit plot and FFT spectrum plot from plot_data."""
+        """Generate the time-domain fit plot and FFT spectrum plot, drawing
+        strictly from ``plot_data`` so the figures stay reconstructable
+        downstream; rebuild it only when called outside ``analyze()``."""
         if plot_data is None:
             plot_data = self.build_plot_data(dataset, results)
         return {

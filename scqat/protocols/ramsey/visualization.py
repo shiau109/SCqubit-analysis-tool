@@ -17,7 +17,13 @@ import xarray as xr
 
 
 def plot_time_domain(plot_data: xr.Dataset) -> plt.Figure:
-    """Plot raw Ramsey signal and fit curve with parameter annotations."""
+    """Plot the raw Ramsey signal and fit curve with parameter annotations.
+
+    Draws strictly from the ``plot_data`` Dataset produced by
+    ``RamseyAnalyzer.build_plot_data`` — variables ``signal`` and ``best_fit``
+    over the ``idle_time`` coordinate, with the fit parameters in ``.attrs`` — so
+    the figure can be reconstructed downstream without rerunning the analysis.
+    """
     fig, ax = plt.subplots(figsize=(8, 6), dpi=100)
 
     idle_time = plot_data.coords['idle_time'].values
@@ -28,6 +34,7 @@ def plot_time_domain(plot_data: xr.Dataset) -> plt.Figure:
 
     ax.legend()
 
+    # Build parameter textbox from the stored attributes
     textstr = _build_param_text(plot_data.attrs)
     ax.text(
         0.98, 0.98, textstr,
@@ -48,11 +55,15 @@ def plot_time_domain(plot_data: xr.Dataset) -> plt.Figure:
 
 
 def plot_fft(plot_data: xr.Dataset) -> plt.Figure:
-    """Plot the FFT amplitude spectrum of the Ramsey signal."""
+    """Plot the FFT amplitude spectrum, drawing only from ``plot_data``
+    (variable ``fft_amp`` over the ``fft_freq`` coordinate)."""
     fig, ax = plt.subplots(figsize=(8, 6), dpi=100)
 
-    ax.plot(plot_data.coords['fft_freq'].values, plot_data['fft_amp'].values,
-            label='FFT (positive freq)')
+    ax.plot(
+        plot_data.coords['fft_freq'].values,
+        plot_data['fft_amp'].values,
+        label='FFT (positive freq)',
+    )
     ax.set_xlabel('Frequency', fontsize=16)
     ax.set_ylabel('Amplitude', fontsize=16)
     ax.xaxis.set_tick_params(labelsize=12)
@@ -63,8 +74,9 @@ def plot_fft(plot_data: xr.Dataset) -> plt.Figure:
     return fig
 
 
-def _build_param_text(attrs) -> str:
-    """Build a formatted string of fit parameters for annotation."""
+def _build_param_text(attrs: dict) -> str:
+    """Build a formatted string of fit parameters for annotation, reading the
+    parameters stored in ``plot_data.attrs``."""
     model_type = attrs.get('model_type', 'single')
 
     k1 = attrs.get('kappa_1', float('nan'))
