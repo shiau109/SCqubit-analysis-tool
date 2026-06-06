@@ -94,8 +94,8 @@ keep): `qubit_spectroscopy` (lived in `NCU` in qcat), `qubit_decoherence`, `hank
 | `fit_gaussian2d` (single + multi) | ✅ `gaussian2d`, `multi_gaussian2d` |
 | `fit_cosine` | ✅ `cosine` (ported, tested; flexible `parse_xy` input) |
 | `fit_exp_decay` | ✅ `exp_decay` (ported, tested; flexible `parse_xy` input) |
-| `fit_powerlaw_base` | ❌ port |
-| `fit_transmon_freqeuency_flux` | ❌ port |
+| `fit_powerlaw_base` | ✅ `powerlaw_base` (ported, tested; flexible `parse_xy` input) |
+| `fit_transmon_freqeuency_flux` | ✅ `transmon_freq_flux` (ported, tested; data-driven offset/period guess) |
 
 scqat-only fitters (keep): `abscos`, `lorentzian`, `multi_damped_oscillation`,
 `qubit_decoherence`.

@@ -15,4 +15,6 @@ from . import fit_exp_decay  # noqa: F401
 from . import fit_multi_damped_oscillation  # noqa: F401
 from . import fit_gaussian2d  # noqa: F401
 from . import fit_lorentzian  # noqa: F401
+from . import fit_powerlaw_base  # noqa: F401
 from . import fit_qubit_decoherence  # noqa: F401
+from . import fit_transmon_freq_flux  # noqa: F401
