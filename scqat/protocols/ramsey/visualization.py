@@ -1,3 +1,17 @@
+"""
+Ramsey plotting helpers.
+
+Both functions consume the **plot_data** Dataset built by
+``RamseyAnalyzer.build_plot_data`` and draw without any recalculation.
+
+plot_data layout
+----------------
+coords : ``idle_time``, ``fft_freq``
+vars   : ``signal`` (idle_time), ``best_fit`` (idle_time), ``fft_amp`` (fft_freq)
+attrs  : ``model_type``, ``a_1``, ``kappa_1``, ``f_1``, ``phi_1``, ``c`` and,
+         for the beat model, ``a_2``, ``kappa_2``, ``f_2``, ``phi_2``
+"""
+
 import matplotlib.pyplot as plt
 import xarray as xr
 

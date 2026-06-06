@@ -112,47 +112,38 @@ class RamseyAnalyzer(BaseAnalyzer):
 
         return results
 
+    def extract_metadata(self, results: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist the model type and fit parameters; drop the diagnostic arrays."""
+        drop = {'best_fit', 'fft_freq', 'fft_amp', 'fit_report'}
+        return {k: v for k, v in results.items() if k not in drop}
+
     def build_plot_data(
         self, dataset: xr.Dataset, results: Dict[str, Any], **kwargs
-    ) -> xr.Dataset:
-        """Assemble the minimal arrays needed to redraw the time-domain and FFT
-        figures into one self-sufficient Dataset.
-
-        Variables: ``signal`` and ``best_fit`` over the ``idle_time`` coordinate,
-        and ``fft_amp`` over the ``fft_freq`` coordinate. The fit parameters shown
-        in the annotation box live in ``.attrs`` (``model_type``, ``a_1``,
-        ``kappa_1``, ``f_1``, ``phi_1``, ``c``, plus the ``*_2`` set for beat fits).
+    ) -> Optional[xr.Dataset]:
+        """
+        Bundle the raw signal + best-fit curve (over ``idle_time``) and the FFT
+        amplitude spectrum (over ``fft_freq``); fit parameters live in ``.attrs``
+        so the time-domain and FFT figures need no recomputation.
         """
         idle_time = dataset.coords['idle_time'].values
-        signal = np.asarray(dataset['signal'].values).squeeze()
+        signal = np.asarray(dataset['signal'].squeeze().values, dtype=float)
+        best_fit = np.asarray(results['best_fit'], dtype=float)
+        fft_freq = np.asarray(results['fft_freq'], dtype=float)
+        fft_amp = np.asarray(results['fft_amp'], dtype=float)
 
-        data_vars = {
-            'signal': ('idle_time', signal),
-            'best_fit': ('idle_time', np.asarray(results['best_fit'])),
-            'fft_amp': ('fft_freq', np.asarray(results['fft_amp'])),
-        }
-        coords = {
-            'idle_time': idle_time,
-            'fft_freq': np.asarray(results['fft_freq']),
-        }
+        attr_keys = ('model_type', 'a_1', 'kappa_1', 'tau_1', 'f_1', 'phi_1', 'c',
+                     'a_2', 'kappa_2', 'tau_2', 'f_2', 'phi_2')
+        attrs = {k: results[k] for k in attr_keys if k in results}
 
-        attrs: Dict[str, Any] = {
-            'model_type': results.get('model_type', 'single'),
-            'a_1': float(results.get('a_1', float('nan'))),
-            'kappa_1': float(results.get('kappa_1', float('nan'))),
-            'f_1': float(results.get('f_1', float('nan'))),
-            'phi_1': float(results.get('phi_1', float('nan'))),
-            'c': float(results.get('c', float('nan'))),
-        }
-        if results.get('model_type') == 'beat':
-            attrs.update({
-                'a_2': float(results.get('a_2', float('nan'))),
-                'kappa_2': float(results.get('kappa_2', float('nan'))),
-                'f_2': float(results.get('f_2', float('nan'))),
-                'phi_2': float(results.get('phi_2', float('nan'))),
-            })
-
-        return xr.Dataset(data_vars, coords=coords, attrs=attrs)
+        return xr.Dataset(
+            {
+                'signal': ('idle_time', signal),
+                'best_fit': ('idle_time', best_fit),
+                'fft_amp': ('fft_freq', fft_amp),
+            },
+            coords={'idle_time': idle_time, 'fft_freq': fft_freq},
+            attrs=attrs,
+        )
 
     def generate_figures(
         self,
