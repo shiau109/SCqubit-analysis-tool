@@ -76,8 +76,8 @@ copy the non-compliant shape.
 | `readout_power.ROFidelityPower` | ✅ `ReadoutPowerFidelityAnalyzer` | ported, plot_data-compliant (unified `ReadoutFidelityAnalyzer`, `sweep_coord='amp_prefactor'`; reuses `StateDiscriminationAnalyzer`) |
 | `readout_freq.ROFidelityFreq` | ✅ `ReadoutFreqFidelityAnalyzer` | ported (same unified analyzer, `sweep_coord='frequency'`) |
 | `zz_interaction.ZZinteractionEcho` | ✅ `ZZInteractionEchoAnalyzer` | ported, plot_data-compliant (damped-oscillation per flux; reuses `damped_oscillation`) |
-| `ac_stark_shift` (functional) | ✅ `AcStarkShiftAnalyzer` | ported, plot_data-compliant (per-power f01 via `QubitSpectroscopyAnalyzer`, then `fa-(2AP+1)X_eff` Stark fit) |
-| `readout_pulse_photon` (functional) | ❌ missing | **port** — qubit-spectroscopy fit vs pulse delay |
+| `ac_stark_shift` (functional) | ✅ `AcStarkShiftAnalyzer` | ported; Analyzer form of `notebooks/ac_stark_spectroscopy.ipynb` (per-amp f01 via `QubitSpectroscopyAnalyzer`, detuning→photon via `chi_eff`, linear fit vs amp²) |
+| `readout_pulse_photon` (functional) | ✅ `ReadoutPulsePhotonAnalyzer` | ported; Analyzer form of `notebooks/ac_stark_readout.ipynb` (per-delay f01 via `QubitSpectroscopyAnalyzer`, photon-number trace + steady-state average) |
 | `conditional_phase` | empty stub | won't port |
 | `plot_ds_raw_scatter` | utility | optional helper, low priority |
 
@@ -123,8 +123,17 @@ scqat-only fitters (keep): `abscos`, `lorentzian`, `multi_damped_oscillation`,
 3. ~~**`ROFidelityPower` / `ROFidelityFreq`**~~ — **done** (unified `ReadoutFidelityAnalyzer`
    + `ReadoutPowerFidelityAnalyzer` / `ReadoutFreqFidelityAnalyzer`); the StateDiscrimination
    schema matched, so reuse was clean.
-4. ~~**`ac_stark_shift`**~~ — **done** (`AcStarkShiftAnalyzer`, reuses `QubitSpectroscopyAnalyzer`).
-5. **`readout_pulse_photon`** + `plot_2d_colormap_from_h5`. ← next feature (lowest urgency; commented node).
+4. ~~**`ac_stark_shift`**~~ — **done** (`AcStarkShiftAnalyzer`, notebook approach; reuses `QubitSpectroscopyAnalyzer`).
+5. ~~**`readout_pulse_photon`**~~ — **done** (`ReadoutPulsePhotonAnalyzer`). Its raw-2D figure subsumes the
+   commented node's `plot_2d_colormap_from_h5`, so a separate generic colormap util is no longer needed.
+
+**All five LCHQMDriver-driven gaps are now closed.** Remaining scqat work is the optional `plot_data`
+retrofit of the still-non-compliant legacy protocols (track 1) and the lower-priority fitters
+(`cosine`, `powerlaw_base`, `transmon_freq_vs_flux`).
+
+**Note — the notebooks are temporary, path-based scripts; the Analyzer is the destination.**
+`notebooks/ac_stark_spectroscopy.ipynb` and `notebooks/ac_stark_readout.ipynb` now have Analyzer
+equivalents and can be retired (or rewritten to call the analyzers).
 
 Port the remaining missing fitters (`cosine`, `powerlaw_base`, `transmon_freq_vs_flux`) as the
 dependent analyzer needs them, each with a `pytest`. (`exp_decay` is done — `tests/test_fit_exp_decay.py`.)

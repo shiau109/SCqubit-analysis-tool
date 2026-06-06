@@ -11,3 +11,4 @@ from scqat.protocols.readout_fidelity import (
     ReadoutFreqFidelityAnalyzer,
 )
 from scqat.protocols.ac_stark_shift import AcStarkShiftAnalyzer
+from scqat.protocols.readout_pulse_photon import ReadoutPulsePhotonAnalyzer
