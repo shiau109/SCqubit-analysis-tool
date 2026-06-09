@@ -125,8 +125,9 @@ class QubitSpectroscopyEstimator(BaseEstimator):
             peaks) and keeps all genuine lines regardless of count. Default 6.0.
         max_peaks : int or None, optional
             Maximum number of peaks to return.  When set, the *max_peaks*
-            most prominent peaks are kept (sorted by amplitude) and the
-            rest are discarded.  Default ``None`` (keep all).
+            most prominent peaks are kept (sorted by prominence) and the
+            rest are discarded.  The returned ``peaks`` list is then sorted
+            by ascending ``detuning``.  Default ``None`` (keep all).
         fit_window_factor : float, optional
             Each peak is fitted inside a window of
             ``fit_window_factor * estimated_width`` around the peak centre.
