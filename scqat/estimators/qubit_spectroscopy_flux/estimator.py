@@ -42,6 +42,7 @@ import xarray as xr
 from scqat.core.base_estimator import BaseEstimator
 from scqat.estimators.qubit_spectroscopy import QubitSpectroscopyEstimator
 from scqat.tools.robust import mad_outliers
+from scqat.estimators.qubit_spectroscopy_flux.visualization import plot_flux_map
 
 
 class QubitSpectroscopyFluxEstimator(BaseEstimator):
@@ -250,38 +251,4 @@ class QubitSpectroscopyFluxEstimator(BaseEstimator):
         kept qubit peak overlaid and outliers marked."""
         if plot_data is None:
             plot_data = self.build_plot_data(dataset, results)
-
-        flux = plot_data.coords["flux_bias"].values.astype(float)
-        amplitude = plot_data["amplitude"].values  # (flux, detuning)
-        peak_flux = plot_data["peak_flux"].values.astype(float)
-        good = plot_data["good"].values.astype(bool)
-        outlier = plot_data["outlier"].values.astype(bool)
-
-        use_full = bool(plot_data.attrs.get("has_full_freq", 0)) and "full_freq" in plot_data.coords
-        if use_full:
-            yvals = plot_data["full_freq"].values.astype(float) / 1e9
-            peak_y = plot_data["peak_full_freq"].values / 1e9
-            ylabel = "Qubit RF frequency (GHz)"
-        else:
-            yvals = plot_data.coords["detuning"].values.astype(float) / 1e6
-            peak_y = plot_data["peak_detuning"].values / 1e6
-            ylabel = "Detuning (MHz)"
-
-        fig, ax = plt.subplots(figsize=(10, 6), dpi=120)
-        pcm = ax.pcolormesh(flux, yvals, amplitude.T, shading="auto", cmap="viridis")
-        fig.colorbar(pcm, ax=ax, label="Signal (arb. u.)")
-        if good.any():
-            ax.plot(peak_flux[good], peak_y[good], "o", color="white", ms=4, mec="black",
-                    mew=0.4, label="peaks (kept)")
-        if outlier.any():
-            ax.plot(peak_flux[outlier], peak_y[outlier], "x", color="red", ms=7, mew=1.5,
-                    label="rejected (outlier)")
-        ax.set_xlabel("Flux bias (V)")
-        ax.set_ylabel(ylabel)
-        n_good = int(plot_data.attrs.get("n_good", int(good.sum())))
-        n_peaks = int(plot_data.attrs.get("n_peaks", peak_flux.size))
-        ax.set_title(f"Qubit spectroscopy vs flux (kept {n_good}/{n_peaks} peaks)")
-        ax.legend(fontsize=8)
-
-        fig.tight_layout()
-        return {"qubit_spectroscopy_flux": fig}
+        return {"qubit_spectroscopy_flux": plot_flux_map(plot_data)}

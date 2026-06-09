@@ -40,6 +40,7 @@ import xarray as xr
 
 from scqat.core.base_estimator import BaseEstimator
 from scqat.estimators.resonator_spectroscopy import ResonatorSpectroscopyEstimator
+from scqat.estimators.resonator_spectroscopy_vs_flux.visualization import plot_flux_map
 
 
 def _mad_outliers(values: np.ndarray, valid: np.ndarray, n_sigma: float, rel_floor: float = 0.25):
@@ -263,37 +264,4 @@ class ResonatorSpectroscopyVsFluxEstimator(BaseEstimator):
         with the fitted resonator-centre trace overlaid, drawn from plot_data."""
         if plot_data is None:
             plot_data = self.build_plot_data(dataset, results)
-
-        flux = plot_data.coords["flux_bias"].values.astype(float)
-        amplitude = plot_data["amplitude"].values  # (flux, detuning)
-
-        use_full = bool(plot_data.attrs.get("has_full_freq", 0)) and "full_freq" in plot_data.coords
-        if use_full:
-            yvals = plot_data["full_freq"].values.astype(float) / 1e9
-            center = plot_data["center_full_freq"].values / 1e9
-            ylabel = "RF frequency (GHz)"
-        else:
-            yvals = plot_data.coords["detuning"].values.astype(float) / 1e6
-            center = plot_data["center_detuning"].values / 1e6
-            ylabel = "Detuning (MHz)"
-
-        good = plot_data["good"].values.astype(bool)
-        outlier = plot_data["outlier"].values.astype(bool)
-
-        fig, ax = plt.subplots(figsize=(10, 6), dpi=120)
-        pcm = ax.pcolormesh(flux, yvals, amplitude.T, shading="auto", cmap="viridis")
-        fig.colorbar(pcm, ax=ax, label="Amplitude |IQ| (arb. u.)")
-        # Kept centres form the trace; rejected (out-of-window / outlier) shown as red x.
-        ax.plot(flux[good], center[good], ".-", color="C3", ms=5, lw=1.0, label="centre (kept)")
-        if outlier.any():
-            ax.plot(flux[outlier], center[outlier], "x", color="red", ms=7, mew=1.5,
-                    label="rejected (outlier)")
-        ax.set_xlabel("Flux bias (V)")
-        ax.set_ylabel(ylabel)
-        n_good = int(plot_data.attrs.get("n_good", int(good.sum())))
-        n_flux = int(plot_data.attrs.get("n_flux", len(flux)))
-        ax.set_title(f"Resonator spectroscopy vs flux (kept {n_good}/{n_flux})")
-        ax.legend(fontsize=8)
-
-        fig.tight_layout()
-        return {"resonator_spectroscopy_vs_flux": fig}
+        return {"resonator_spectroscopy_vs_flux": plot_flux_map(plot_data)}

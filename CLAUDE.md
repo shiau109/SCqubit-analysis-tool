@@ -134,18 +134,23 @@ The inherited `analyze()` method orchestrates:
 (optional save of metadata + plot data) → `generate_figures` → (optional save of
 figures).
 
-- **Simple estimator** (no dedicated visualization): a single file, e.g.
-  `estimators/t1_inversion_recovery.py`.
-- **Complex estimator** (with its own visualization helpers): a subpackage, e.g.:
+- **Every estimator is a subpackage** — one uniform layout, so there is no
+  per-estimator judgment call about whether to "fold". The structure keys on stable
+  identity (it *is* an estimator), not on the mutable question of whether it
+  currently draws a figure:
   ```
-  estimators/state_discrimination/
+  estimators/<name>/
       __init__.py      # re-exports the estimator class
-      estimator.py      # the BaseEstimator subclass
+      estimator.py     # the BaseEstimator subclass
       visualization.py # estimator-specific plotting helpers (consume plot_data)
   ```
-  The subpackage `__init__.py` MUST re-export the estimator so external code can
-  use `from scqat.estimators.<name> import <Estimator>` regardless of whether it is
-  a flat module or a subpackage.
+  `visualization.py` is present **whenever the estimator draws figures** — i.e.
+  almost always, since `generate_figures` requires `plot_data` and every estimator
+  to date emits both. A genuine pure-fit estimator with no figures simply omits
+  `visualization.py` while staying a subpackage, so that *adding* a plot later is a
+  new file rather than a module→package restructure. The subpackage `__init__.py`
+  MUST re-export the estimator class so external code can always use
+  `from scqat.estimators.<name> import <Estimator>`.
 
 - **`estimators/__init__.py` aggregation:** Every new estimator MUST also be
   imported in `scqat/estimators/__init__.py` so all estimators are available via

@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Generated notebook output (re-derivable; not source)
+notebooks/temp_output/
