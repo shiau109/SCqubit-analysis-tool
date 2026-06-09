@@ -48,6 +48,7 @@ import xarray as xr
 from lmfit import Model
 
 from scqat.core.base_estimator import BaseEstimator
+from scqat.estimators.resonator_flux_dispersion.visualization import plot_dispersion
 
 
 # Default assumed sweet-spot detuning (Hz) used to fix f_q_max = f_r0 - this,
@@ -261,28 +262,4 @@ class ResonatorFluxDispersionEstimator(BaseEstimator):
         and the sweet spot marked, drawn from plot_data."""
         if plot_data is None:
             plot_data = self.build_plot_data(dataset, results)
-
-        flux = plot_data.coords["flux_bias"].values.astype(float)
-        center = plot_data["center_freq"].values.astype(float)
-        fit_flux = plot_data.coords["fit_flux"].values.astype(float)
-        fit_freq = plot_data["fit_freq"].values.astype(float)
-        ss_flux = float(plot_data.attrs.get("sweet_spot_flux", np.nan))
-        ss_freq = float(plot_data.attrs.get("sweet_spot_freq", np.nan))
-        dv_phi0 = float(plot_data.attrs.get("dv_phi0", np.nan))
-
-        fig, ax = plt.subplots(figsize=(10, 5), dpi=120)
-        ax.plot(flux, center / 1e9, "o", ms=4, color="C0", label="fitted centre (data)")
-        if np.isfinite(fit_freq).any():
-            ax.plot(fit_flux, fit_freq / 1e9, "-", lw=1.8, color="C1",
-                    label=f"dispersive fit (dv_phi0={dv_phi0:.4f} V)")
-        if np.isfinite(ss_flux):
-            ax.axvline(ss_flux, color="C3", ls=":", lw=1.0,
-                       label=f"sweet spot @ {ss_flux:.4f} V, {ss_freq / 1e9:.4f} GHz")
-
-        ax.set_xlabel("Flux bias (V)")
-        ax.set_ylabel("Resonator centre frequency (GHz)")
-        cond = "" if plot_data.attrs.get("f_q_max_fixed", 1) == 0 else " (g conditional on assumed f_q_max)"
-        ax.set_title("Resonator flux dispersion" + cond)
-        ax.legend(fontsize=8)
-        fig.tight_layout()
-        return {"resonator_flux_dispersion": fig}
+        return {"resonator_flux_dispersion": plot_dispersion(plot_data)}

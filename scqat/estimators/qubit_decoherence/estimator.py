@@ -37,6 +37,7 @@ from scqat.tools.fit_qubit_decoherence import (
     rho11_model as _rho11_model,
     rho10_model as _rho10_model,
 )
+from scqat.estimators.qubit_decoherence.visualization import plot_decoherence
 
 
 class QubitDecoherenceEstimator(BaseEstimator):
@@ -179,44 +180,4 @@ class QubitDecoherenceEstimator(BaseEstimator):
         """One figure per fitted variable: data + fit overlay with residual subplot."""
         if plot_data is None:
             plot_data = self.build_plot_data(dataset, results)
-
-        t = plot_data.coords["time"].values
-        figs: Dict[str, plt.Figure] = {}
-
-        for var_name in ("rho_11", "rho_10"):
-            if f"{var_name}_data" not in plot_data:
-                continue
-            y_data = plot_data[f"{var_name}_data"].values
-            y_fit = plot_data[f"{var_name}_fit"].values
-            residuals = plot_data[f"{var_name}_residual"].values
-            label = r"$\rho_{11}$" if var_name == "rho_11" else r"$\rho_{10}$"
-
-            fig, (ax_top, ax_bot) = plt.subplots(
-                2, 1, sharex=True, gridspec_kw={"height_ratios": [3, 1]},
-            )
-
-            ax_top.plot(t, y_data, "o", ms=3, alpha=0.6, label=f"{label} data")
-            ax_top.plot(
-                t, y_fit, "-",
-                label=(
-                    f"fit ("
-                    f"\u03b3={plot_data.attrs[f'{var_name}_gamma']:.4g}, "
-                    f"\u03bb={plot_data.attrs[f'{var_name}_lambda']:.4g}, "
-                    f"\u0394={plot_data.attrs[f'{var_name}_Delta']:.4g})"
-                ),
-            )
-            ax_top.set_ylabel(label)
-            ax_top.legend()
-            ax_top.set_title(
-                f"{label}(t) decoherence fit  [{plot_data.attrs[f'{var_name}_regime']}]"
-            )
-
-            ax_bot.plot(t, residuals, ".-", ms=2)
-            ax_bot.axhline(0, color="k", lw=0.5)
-            ax_bot.set_xlabel("Time")
-            ax_bot.set_ylabel("Residual")
-
-            fig.tight_layout()
-            figs[var_name] = fig
-
-        return figs
+        return plot_decoherence(plot_data)

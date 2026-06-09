@@ -1,0 +1,1 @@
+from scqat.estimators.qubit_decoherence.estimator import QubitDecoherenceEstimator
