@@ -27,7 +27,7 @@ from _harness import load, slices, compare, estimator_method, replot
 from scqat.estimators.qubit_spectroscopy import QubitSpectroscopyEstimator
 from scqat.tools.fit_lorentzian import FitLorentzian, lorentzian
 
-DATA = r"D:/SynologyDrive/LiChiehHsiao/AS/SynologyDrive/data/raw_data/2026-06-08/#45_LCH_qubit_spectroscopy_233311/ds_raw.h5"
+DATA = r"D:\SynologyDrive\LiChiehHsiao\AS\SynologyDrive\data\raw_data\2026-06-09\#54_LCH_qubit_spectroscopy_090054/ds_raw.h5"
 DATA_DIR = os.path.dirname(DATA)
 
 EST = QubitSpectroscopyEstimator()
@@ -93,7 +93,7 @@ compare(slices(DS, prep=prep), [m_estimator, m_new],
 
 # %% (B) Test PARAMETERS — same estimator + data, swept kwargs (here: peak prominence)
 param_methods = [
-    estimator_method(EST, adapt, label=f"prominence={p}", max_peaks=1, prominence=p)
+    estimator_method(EST, adapt, label=f"prominence={p}", max_peaks=2, prominence=p)
     for p in (0.05, 0.1, 0.2, 0.4)
 ]
 compare(slices(DS, prep=prep), param_methods,
@@ -108,5 +108,5 @@ replot(EST, slices(DS, prep=prep),
 # %% (D) REPLOT with NO re-fit — from a run saved with save_plot_data=True
 # Point at any LCHQM run folder that contains plotdata_*.h5; figures are reconstructed
 # straight from the saved plot-data (zero recomputation).
-SAVED_RUN = r"D:/SynologyDrive/LiChiehHsiao/AS/SynologyDrive/data/raw_data/2026-06-09/#54_LCH_qubit_spectroscopy_090054"
+SAVED_RUN = r"D:\SynologyDrive\LiChiehHsiao\AS\SynologyDrive\data\raw_data\2026-06-09\#54_LCH_qubit_spectroscopy_090054"
 replot(EST, from_plotdata=SAVED_RUN, out_dir=os.path.join(SAVED_RUN, "replot_check"))
