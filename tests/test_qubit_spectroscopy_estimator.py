@@ -20,6 +20,7 @@ from scqat.estimators import QubitSpectroscopyEstimator
 from scqat.estimators.qubit_spectroscopy import (
     QubitSpectroscopyEstimator as SubpkgEstimator,
 )
+from scqat.estimators.qubit_spectroscopy.estimator import _merge_overlapping_peaks
 from scqat.tools.fit_lorentzian import lorentzian
 
 
@@ -134,3 +135,60 @@ class TestQubitSpectroscopyEstimator:
         assert set(figs) == {"spectrum"}
         assert isinstance(figs["spectrum"], plt.Figure)
         plt.close("all")
+
+
+class TestPeakMerging:
+    """De-duplication of near-coincident Lorentzian fits (the duplicate-peak fix)."""
+
+    @staticmethod
+    def _pk(detuning, amplitude, fwhm):
+        return {"detuning": float(detuning), "amplitude": float(amplitude), "fwhm": float(fwhm)}
+
+    def test_merge_helper_collapses_overlapping_keeps_larger_area(self):
+        # Mimics run #66 q5: a broad central line (large area) and a narrow
+        # shoulder bump 4.4 MHz away (centres within the summed half-widths).
+        broad = self._pk(-0.5e6, 1.0, 8.56e6)   # area ~8.6e6
+        narrow = self._pk(3.87e6, 1.0, 2.43e6)  # area ~2.4e6
+        merged = _merge_overlapping_peaks([broad, narrow], merge_factor=1.0)
+        assert len(merged) == 1
+        assert merged[0]["detuning"] == pytest.approx(-0.5e6)  # the larger-area line kept
+
+    def test_merge_helper_keeps_separated_lines(self):
+        # Mimics run #66 q4: ~91 MHz apart -> genuinely two transitions, never merged.
+        far_a = self._pk(-91e6, 1.0, 1.48e6)
+        far_b = self._pk(0.5e6, 1.0, 22.72e6)
+        merged = _merge_overlapping_peaks([far_a, far_b], merge_factor=1.0)
+        assert len(merged) == 2
+
+    def test_merge_factor_zero_disables(self):
+        broad = self._pk(-0.5e6, 1.0, 8.56e6)
+        narrow = self._pk(3.87e6, 1.0, 2.43e6)
+        assert len(_merge_overlapping_peaks([broad, narrow], merge_factor=0)) == 2
+
+    def test_overlapping_peaks_merged_end_to_end(self):
+        # A tall narrow bump riding on a broad line: clean synthetic version of the
+        # q5 duplicate. With merging on -> one peak; with it off -> the duplicate returns.
+        ds = _make_ds([(0e6, 1.0, 4e6), (4e6, 1.2, 0.8e6)])
+        est = QubitSpectroscopyEstimator()
+        merged = est.extract_parameters(ds, merge_factor=1.0)["peaks"]
+        unmerged = est.extract_parameters(ds, merge_factor=0)["peaks"]
+        assert len(merged) == 1
+        assert len(unmerged) >= len(merged)
+
+    def test_two_peaks_survive_default_merge(self):
+        # The genuine two-transition sweep must stay two peaks under the default
+        # merge_factor=1.0 (guards against over-merging in the full pipeline).
+        ds = _make_ds([(-60e6, 1.0, 1e6), (20e6, 0.8, 2e6)])
+        peaks = QubitSpectroscopyEstimator().extract_parameters(ds)["peaks"]
+        assert len(peaks) == 2
+
+    def test_subresolution_spike_dropped(self):
+        # A single-sample spike fits as a delta-like Lorentzian (fwhm << step) and
+        # must be dropped by the min-width guard, leaving only the real line.
+        ds = _make_ds([(0e6, 1.0, 4e6)])
+        ds["I"].values[5] += 0.5  # isolated one-sample spike far from the real peak
+        est = QubitSpectroscopyEstimator()
+        step = abs(float(np.median(np.diff(ds.detuning.values))))
+        default = est.extract_parameters(ds)["peaks"]
+        assert all(pk["fwhm"] >= 0.5 * step for pk in default)
+        assert any(abs(pk["detuning"]) < 5e6 for pk in default)  # real line recovered
