@@ -47,8 +47,11 @@ from scqat.parsers.xarray_h5_parser import load_xarray_h5
 # Defaults (mirror the values previously hardcoded in view_single_raw.ipynb).
 # ---------------------------------------------------------------------------
 DEFAULT_BASIS_INDEX = 2          # Z-basis index used for sq_data preview
-DEFAULT_RHO11_OFFSET = 0.045     # readout-zero subtraction
-DEFAULT_RHO11_SCALE = 0.78       # readout contrast normalization
+# Identity by default: the input is already P(|1>) (state-discriminated readout
+# or simulation), so no rescaling is applied. For raw-I (non-discriminated) data
+# pass explicit offset/scale, e.g. the old readout correction 0.045 / 0.78.
+DEFAULT_RHO11_OFFSET = 0.0       # readout-zero subtraction (identity)
+DEFAULT_RHO11_SCALE = 1.0        # readout contrast normalization (identity)
 DEFAULT_TAIL_FRAC = 0.1          # fraction of tail used for baseline mean
 DEFAULT_HANKEL_KWARGS: dict[str, Any] = {
     "mode_method": "diff_ratio",

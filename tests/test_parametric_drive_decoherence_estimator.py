@@ -107,6 +107,15 @@ class TestParametricDriveDecoherenceEstimator:
         assert res["n_decoh_ok"] == n
         assert np.isfinite(res["gamma"]).all()
 
+    def test_default_offset_scale_is_identity(self):
+        """With no offset/scale kwargs the estimator must not rescale a population
+        dataset: rho_11 equals the input state verbatim (offset 0 / scale 1
+        default). Guards against re-introducing the I-quadrature readout
+        correction that pushed discriminated rho_11 outside [0, 1]."""
+        ds, _ = _make_rho11_only()
+        res = ParametricDriveDecoherenceEstimator().extract_parameters(ds)
+        np.testing.assert_allclose(res["rho11_data"], ds["state"].values)
+
     def test_tomography_path(self):
         ds, gammas = _make_tomo()
         res = ParametricDriveDecoherenceEstimator().extract_parameters(ds, **_KW)
