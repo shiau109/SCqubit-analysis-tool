@@ -9,7 +9,7 @@ plot-data, and figures under `output/<tag>/<qubit>/`.
 |---|---|---|---|
 | `run_decoherence_estimator.py` | `ParametricDriveDecoherenceEstimator` | `LCH_qubit_parametric_drive_freq_time` (`tomography` flag) | `driving_time` × `driving_frequency` (× `basis`) |
 | `run_decoherence_on_sim.py` | `ParametricDriveDecoherenceEstimator` | SCQ.jl parametric-drive sim (virtual experiment) | `driving_time` × `driving_frequency` |
-| `run_resonance_estimator.py` | `ParametricDriveResonanceEstimator` | `LCH_qubit_parametric_drive_fixed_time` | `amplitude_ratio` × `driving_frequency` |
+| `run_resonance_estimator.py` | `ParametricDriveResonanceEstimator` | `LCH_qubit_parametric_drive_fixed_time` | `drive_amp` × `driving_frequency` |
 
 ## Decoherence (existing data, both layouts)
 
@@ -63,7 +63,7 @@ time grids are thinned with `time_stride`.
 
 ## Resonance (fixed-time map)
 
-Fits a Lorentzian per `amplitude_ratio` slice and returns the cleaned
+Fits a Lorentzian per `drive_amp` slice and returns the cleaned
 resonance-peak point-cloud over the 2-D map. No fixed-time dataset was provided,
 so it runs a **synthetic** drifting-ridge map by default; pass a real `ds_raw.h5`
 to analyse measured data:

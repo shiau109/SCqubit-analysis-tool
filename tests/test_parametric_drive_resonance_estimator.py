@@ -1,6 +1,6 @@
 """Tests for the ParametricDriveResonanceEstimator.
 
-The fixed-time parametric-drive node produces a 2-D ``amplitude_ratio`` x
+The fixed-time parametric-drive node produces a 2-D ``drive_amp`` x
 ``driving_frequency`` map of P(|1>); a parametric resonance shows up as a peak in
 frequency whose centre drifts with the drive amplitude. The estimator fits each
 amplitude slice (delegating to QubitSpectroscopyEstimator) and returns a cleaned
@@ -33,8 +33,8 @@ def _make_map(n_amp=7, n_freq=121, noise=4e-3, seed=0):
         state[k] = 0.1 + lor + noise * rng.standard_normal(n_freq)
 
     ds = xr.Dataset(
-        {"state": (("amplitude_ratio", "driving_frequency"), state)},
-        coords={"amplitude_ratio": amp, "driving_frequency": freq},
+        {"state": (("drive_amp", "driving_frequency"), state)},
+        coords={"drive_amp": amp, "driving_frequency": freq},
     )
     return ds, amp, f0
 
@@ -60,7 +60,7 @@ class TestParametricDriveResonanceEstimator:
         # Kept peaks should track the planted centres.
         good = res["good"]
         assert good.any()
-        kept_amp = res["peak_amp_ratio"][good]
+        kept_amp = res["peak_drive_amp"][good]
         kept_freq = res["peak_frequency"][good]
         for a, f in zip(kept_amp, kept_freq):
             expected = np.interp(a, amp, f0)
@@ -73,14 +73,14 @@ class TestParametricDriveResonanceEstimator:
         meta = est.extract_metadata(res)
         assert "amplitude_map" not in meta
         assert "driving_frequency" not in meta
-        assert {"peak_amp_ratio", "peak_frequency", "good", "n_good"} <= set(meta)
+        assert {"peak_drive_amp", "peak_frequency", "good", "n_good"} <= set(meta)
 
     def test_plot_data_layout(self):
         ds, _, _ = _make_map()
         est = ParametricDriveResonanceEstimator()
         res = est.extract_parameters(ds)
         pd = est.build_plot_data(ds, res)
-        assert pd["amplitude"].dims == ("amplitude_ratio", "driving_frequency")
+        assert pd["amplitude"].dims == ("drive_amp", "driving_frequency")
         assert pd["peak_frequency"].dims == ("peak",)
         assert "good" in pd and "outlier" in pd
 

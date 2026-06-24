@@ -1,7 +1,7 @@
 """Run ``ParametricDriveResonanceEstimator`` on a fixed-time parametric-drive map.
 
 This is the estimator the renewed ``LCH_qubit_parametric_drive_fixed_time`` node
-calls: on the 2-D ``amplitude_ratio`` x ``driving_frequency`` map (measured at a
+calls: on the 2-D ``drive_amp`` x ``driving_frequency`` map (measured at a
 fixed drive time) it fits a Lorentzian per amplitude slice and returns the cleaned
 resonance-peak point-cloud, plus the map figure with peaks/outliers overlaid.
 
@@ -47,8 +47,8 @@ def synthetic_map(n_amp: int = 9, n_freq: int = 161, noise: float = 4e-3, seed: 
         lor = 0.6 / (1.0 + ((freq - f0[k]) / hwhm) ** 2)
         state[k] = 0.1 + lor + noise * rng.standard_normal(n_freq)
     return xr.Dataset(
-        {"state": (("amplitude_ratio", "driving_frequency"), state)},
-        coords={"amplitude_ratio": amp, "driving_frequency": freq},
+        {"state": (("drive_amp", "driving_frequency"), state)},
+        coords={"drive_amp": amp, "driving_frequency": freq},
     )
 
 

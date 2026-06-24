@@ -2,19 +2,19 @@
 Parametric-Drive Resonance Estimator
 =====================================
 Extract the parametric-resonance line(s) from a 2-D
-``amplitude_ratio`` × ``driving_frequency`` map measured at a **fixed** drive
+``drive_amp`` × ``driving_frequency`` map measured at a **fixed** drive
 time (the ``LCH_qubit_parametric_drive_fixed_time`` node). The signal is
 :math:`P(|1\\rangle)` after the parametric drive; a resonance shows up as a
 peak/dip in frequency whose position drifts with the drive amplitude.
 
 This mirrors
 :class:`~scqat.estimators.qubit_spectroscopy_flux.QubitSpectroscopyFluxEstimator`
-with the axis roles ``flux_bias → amplitude_ratio`` and
-``detuning → driving_frequency``: for every ``amplitude_ratio`` slice the
+with the axis roles ``flux_bias → drive_amp`` and
+``detuning → driving_frequency``: for every ``drive_amp`` slice the
 estimator delegates to
 :class:`~scqat.estimators.qubit_spectroscopy.QubitSpectroscopyEstimator` (peak
 detection + single-Lorentzian fit per peak) and collects every detected peak as
-a **point-cloud** ``(amplitude_ratio, frequency, fwhm, amplitude)``.
+a **point-cloud** ``(drive_amp, frequency, fwhm, amplitude)``.
 
 Cleaning: a peak is kept (``good``) when its centre lies strictly inside the
 swept frequency window and its ``fwhm`` / ``|amplitude|`` are not robust
@@ -26,10 +26,10 @@ The dataset should have the ``qubit`` dimension already removed (e.g. via
 ``repetition_data`` from ``scqat.parsers``).
 
 Coordinates:
-    - amplitude_ratio   : 1-D float array — parametric drive amplitude scale.
+    - drive_amp   : 1-D float array — parametric drive amplitude scale.
     - driving_frequency : 1-D float array — parametric drive frequency (Hz).
 Data variables:
-    - state / signal : (amplitude_ratio, driving_frequency) real P(|1⟩), **or**
+    - state / signal : (drive_amp, driving_frequency) real P(|1⟩), **or**
     - IQdata / I, Q  : the complex demodulated signal.
 """
 
@@ -47,7 +47,7 @@ from scqat.estimators.parametric_drive_resonance.visualization import plot_param
 
 class ParametricDriveResonanceEstimator(BaseEstimator):
     """Fit the parametric-resonance peak(s) at every drive amplitude and report
-    them as a point-cloud over (``amplitude_ratio``, ``driving_frequency``)."""
+    them as a point-cloud over (``drive_amp``, ``driving_frequency``)."""
 
     estimator_name = "parametric_drive_resonance"
 
@@ -55,7 +55,7 @@ class ParametricDriveResonanceEstimator(BaseEstimator):
     # Validation
     # ------------------------------------------------------------------
     def _check_data(self, dataset: xr.Dataset) -> None:
-        for coord in ("amplitude_ratio", "driving_frequency"):
+        for coord in ("drive_amp", "driving_frequency"):
             if coord not in dataset.coords:
                 raise ValueError(
                     f"ParametricDriveResonanceEstimator requires a '{coord}' coordinate."
@@ -63,9 +63,9 @@ class ParametricDriveResonanceEstimator(BaseEstimator):
 
     @staticmethod
     def _signal_map(ds: xr.Dataset, signal_var: Optional[str]) -> np.ndarray:
-        """2-D signal magnitude oriented (amplitude_ratio, driving_frequency)."""
+        """2-D signal magnitude oriented (drive_amp, driving_frequency)."""
         var = signal_var if signal_var is not None else "IQdata"
-        return np.abs(ds[var].transpose("amplitude_ratio", "driving_frequency").values)
+        return np.abs(ds[var].transpose("drive_amp", "driving_frequency").values)
 
     # ------------------------------------------------------------------
     # Core extraction
@@ -73,7 +73,7 @@ class ParametricDriveResonanceEstimator(BaseEstimator):
     def extract_parameters(self, dataset: xr.Dataset, **kwargs) -> Dict[str, Any]:
         """
         Fit and collect every parametric-resonance peak in every
-        ``amplitude_ratio`` slice.
+        ``drive_amp`` slice.
 
         Each slice (with ``driving_frequency`` renamed to ``detuning``) is handed
         to ``QubitSpectroscopyEstimator.extract_parameters``; ``kwargs`` such as
@@ -95,7 +95,7 @@ class ParametricDriveResonanceEstimator(BaseEstimator):
         Returns
         -------
         dict
-            ``{amplitude_ratio, driving_frequency, peak_amp_ratio,
+            ``{drive_amp, driving_frequency, peak_drive_amp,
             peak_amp_index, peak_frequency, peak_fwhm, peak_amplitude,
             in_window, outlier, good, fwhm_median, fwhm_mad,
             peak_amplitude_median, peak_amplitude_mad, amplitude_map,
@@ -124,7 +124,7 @@ class ParametricDriveResonanceEstimator(BaseEstimator):
                     "variable, an 'IQdata' variable, or both 'I' and 'Q'."
                 )
 
-        amp = ds.coords["amplitude_ratio"].values.astype(float)
+        amp = ds.coords["drive_amp"].values.astype(float)
         freq = ds.coords["driving_frequency"].values.astype(float)
 
         single = QubitSpectroscopyEstimator()
@@ -133,7 +133,7 @@ class ParametricDriveResonanceEstimator(BaseEstimator):
         pk_freq, pk_fwhm, pk_amplitude = [], [], []
         for k in range(len(amp)):
             # The single-slice estimator expects a 'detuning' coordinate.
-            sl = ds.isel(amplitude_ratio=k).rename({"driving_frequency": "detuning"})
+            sl = ds.isel(drive_amp=k).rename({"driving_frequency": "detuning"})
             try:
                 r = single.extract_parameters(sl, **kwargs)
             except Exception:
@@ -146,7 +146,7 @@ class ParametricDriveResonanceEstimator(BaseEstimator):
                 pk_amplitude.append(float(pk["amplitude"]))
 
         peak_amp_index = np.asarray(pk_amp_idx, dtype=int)
-        peak_amp_ratio = np.asarray(pk_amp, dtype=float)
+        peak_drive_amp = np.asarray(pk_amp, dtype=float)
         peak_frequency = np.asarray(pk_freq, dtype=float)
         peak_fwhm = np.asarray(pk_fwhm, dtype=float)
         peak_amplitude = np.asarray(pk_amplitude, dtype=float)
@@ -169,9 +169,9 @@ class ParametricDriveResonanceEstimator(BaseEstimator):
         amplitude_map = self._signal_map(ds, signal_var)
 
         return {
-            "amplitude_ratio": amp,
+            "drive_amp": amp,
             "driving_frequency": freq,
-            "peak_amp_ratio": peak_amp_ratio,
+            "peak_drive_amp": peak_drive_amp,
             "peak_amp_index": peak_amp_index,
             "peak_frequency": peak_frequency,
             "peak_fwhm": peak_fwhm,
@@ -204,14 +204,14 @@ class ParametricDriveResonanceEstimator(BaseEstimator):
     ) -> Optional[xr.Dataset]:
         """Bundle the 2-D signal map and the peak point-cloud (with good/outlier
         masks) into one self-sufficient Dataset."""
-        amp = np.asarray(results["amplitude_ratio"], dtype=float)
+        amp = np.asarray(results["drive_amp"], dtype=float)
         freq = np.asarray(results["driving_frequency"], dtype=float)
         amplitude = np.asarray(results["amplitude_map"], dtype=float)
         n_peaks = int(results["n_peaks"])
 
         data_vars: Dict[str, Any] = {
-            "amplitude": (("amplitude_ratio", "driving_frequency"), amplitude),
-            "peak_amp_ratio": ("peak", np.asarray(results["peak_amp_ratio"], float)),
+            "amplitude": (("drive_amp", "driving_frequency"), amplitude),
+            "peak_drive_amp": ("peak", np.asarray(results["peak_drive_amp"], float)),
             "peak_frequency": ("peak", np.asarray(results["peak_frequency"], float)),
             "peak_fwhm": ("peak", np.asarray(results["peak_fwhm"], float)),
             "peak_amplitude": ("peak", np.asarray(results["peak_amplitude"], float)),
@@ -219,7 +219,7 @@ class ParametricDriveResonanceEstimator(BaseEstimator):
             "outlier": ("peak", np.asarray(results["outlier"], bool)),
         }
         coords: Dict[str, Any] = {
-            "amplitude_ratio": amp, "driving_frequency": freq, "peak": np.arange(n_peaks),
+            "drive_amp": amp, "driving_frequency": freq, "peak": np.arange(n_peaks),
         }
         attrs: Dict[str, Any] = {
             "n_amp": int(results["n_amp"]),
@@ -239,7 +239,7 @@ class ParametricDriveResonanceEstimator(BaseEstimator):
         plot_data: Optional[xr.Dataset] = None,
         **kwargs,
     ) -> Dict[str, plt.Figure]:
-        """Single figure: the 2-D signal map over (amplitude_ratio,
+        """Single figure: the 2-D signal map over (drive_amp,
         driving_frequency) with every kept resonance peak overlaid and outliers
         marked."""
         if plot_data is None:

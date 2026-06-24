@@ -7,9 +7,9 @@ recalculation.
 
 plot_data layout
 ----------------
-coords : ``amplitude_ratio``, ``driving_frequency``, ``peak``
-vars   : ``amplitude`` (amplitude_ratio, driving_frequency); per-peak
-         ``peak_amp_ratio`` / ``peak_frequency`` / ``peak_fwhm`` /
+coords : ``drive_amp``, ``driving_frequency``, ``peak``
+vars   : ``amplitude`` (drive_amp, driving_frequency); per-peak
+         ``peak_drive_amp`` / ``peak_frequency`` / ``peak_fwhm`` /
          ``peak_amplitude`` / ``good`` / ``outlier``
 attrs  : ``n_amp``, ``n_peaks``, ``n_good``, ``n_outlier``
 """
@@ -19,14 +19,14 @@ import xarray as xr
 
 
 def plot_parametric_map(plot_data: xr.Dataset) -> plt.Figure:
-    """The 2-D signal map over (amplitude_ratio, driving_frequency) with every
+    """The 2-D signal map over (drive_amp, driving_frequency) with every
     kept resonance peak overlaid and outliers marked, drawn entirely from
     ``plot_data``."""
-    amp = plot_data.coords["amplitude_ratio"].values.astype(float)
+    amp = plot_data.coords["drive_amp"].values.astype(float)
     freq_mhz = plot_data.coords["driving_frequency"].values.astype(float) / 1e6
-    amplitude = plot_data["amplitude"].values  # (amplitude_ratio, driving_frequency)
+    amplitude = plot_data["amplitude"].values  # (drive_amp, driving_frequency)
 
-    peak_amp = plot_data["peak_amp_ratio"].values.astype(float)
+    peak_amp = plot_data["peak_drive_amp"].values.astype(float)
     peak_freq = plot_data["peak_frequency"].values.astype(float) / 1e6
     good = plot_data["good"].values.astype(bool)
     outlier = plot_data["outlier"].values.astype(bool)
@@ -40,7 +40,7 @@ def plot_parametric_map(plot_data: xr.Dataset) -> plt.Figure:
     if outlier.any():
         ax.plot(peak_amp[outlier], peak_freq[outlier], "x", color="red", ms=7, mew=1.5,
                 label="rejected (outlier)")
-    ax.set_xlabel("Amplitude ratio (arb. u.)")
+    ax.set_xlabel("Drive amplitude")
     ax.set_ylabel("Driving frequency (MHz)")
     n_good = int(plot_data.attrs.get("n_good", int(good.sum())))
     n_peaks = int(plot_data.attrs.get("n_peaks", peak_amp.size))
