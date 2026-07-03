@@ -1,6 +1,6 @@
 """
-Resonator Spectroscopy vs Power Estimator
-=========================================
+Resonator Spectroscopy Power Estimator
+======================================
 Reduce a 2-D resonator-spectroscopy-vs-readout-power map to a 1-D
 ``center_frequency(power)`` curve by fitting the resonator dip **power-by-power**,
 then pick the optimal readout power from where that centre stops shifting.
@@ -47,7 +47,7 @@ import xarray as xr
 from scqat.core.base_estimator import BaseEstimator
 from scqat.estimators.resonator_spectroscopy import ResonatorSpectroscopyEstimator
 from scqat.estimators.resonator_spectroscopy_vs_flux.estimator import _mad_outliers
-from scqat.estimators.resonator_spectroscopy_vs_power.visualization import plot_power_map
+from scqat.estimators.resonator_spectroscopy_power.visualization import plot_power_map
 
 
 def _rolling_mean_nan(x: np.ndarray, window: int) -> np.ndarray:
@@ -116,7 +116,7 @@ def _pick_optimal_power(
     return float(power[idx]) - float(buffer_dbm)
 
 
-class ResonatorSpectroscopyVsPowerEstimator(BaseEstimator):
+class ResonatorSpectroscopyPowerEstimator(BaseEstimator):
     """
     Fit the resonator dip at every readout power, report the resonator centre
     frequency as a function of power, and pick the optimal readout power.
@@ -128,7 +128,7 @@ class ResonatorSpectroscopyVsPowerEstimator(BaseEstimator):
     ``resonator_frequency`` and an overall ``optimal_success`` flag.
     """
 
-    estimator_name = "resonator_spectroscopy_vs_power"
+    estimator_name = "resonator_spectroscopy_power"
 
     # ------------------------------------------------------------------
     # Validation
@@ -137,11 +137,11 @@ class ResonatorSpectroscopyVsPowerEstimator(BaseEstimator):
         for coord in ("power", "detuning"):
             if coord not in dataset.coords:
                 raise ValueError(
-                    f"ResonatorSpectroscopyVsPowerEstimator requires a '{coord}' coordinate."
+                    f"ResonatorSpectroscopyPowerEstimator requires a '{coord}' coordinate."
                 )
         if "IQdata" not in dataset and not ("I" in dataset and "Q" in dataset):
             raise ValueError(
-                "ResonatorSpectroscopyVsPowerEstimator requires an 'IQdata' variable, or both 'I' and 'Q'."
+                "ResonatorSpectroscopyPowerEstimator requires an 'IQdata' variable, or both 'I' and 'Q'."
             )
 
     # ------------------------------------------------------------------
@@ -355,4 +355,4 @@ class ResonatorSpectroscopyVsPowerEstimator(BaseEstimator):
         overlaid, drawn from plot_data."""
         if plot_data is None:
             plot_data = self.build_plot_data(dataset, results)
-        return {"resonator_spectroscopy_vs_power": plot_power_map(plot_data)}
+        return {"resonator_spectroscopy_power": plot_power_map(plot_data)}

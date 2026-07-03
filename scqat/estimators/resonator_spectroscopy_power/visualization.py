@@ -2,7 +2,7 @@
 Resonator-spectroscopy-vs-power plotting helper.
 
 ``plot_power_map`` consumes the **plot_data** Dataset built by
-``ResonatorSpectroscopyVsPowerEstimator.build_plot_data`` and draws without any
+``ResonatorSpectroscopyPowerEstimator.build_plot_data`` and draws without any
 recalculation.
 
 plot_data layout

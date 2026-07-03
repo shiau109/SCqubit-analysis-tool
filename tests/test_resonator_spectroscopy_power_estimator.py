@@ -1,4 +1,4 @@
-"""Tests for the ResonatorSpectroscopyVsPowerEstimator.
+"""Tests for the ResonatorSpectroscopyPowerEstimator.
 
 Synthesises a resonator-spectroscopy-vs-power map whose dip centre is flat in the
 low-power (dispersive) regime and shifts sharply through a transition toward high
@@ -12,11 +12,11 @@ import xarray as xr
 import matplotlib.pyplot as plt
 import pytest
 
-from scqat.estimators import ResonatorSpectroscopyVsPowerEstimator
-from scqat.estimators.resonator_spectroscopy_vs_power import (
-    ResonatorSpectroscopyVsPowerEstimator as SubpkgEstimator,
+from scqat.estimators import ResonatorSpectroscopyPowerEstimator
+from scqat.estimators.resonator_spectroscopy_power import (
+    ResonatorSpectroscopyPowerEstimator as SubpkgEstimator,
 )
-from scqat.estimators.resonator_spectroscopy_vs_power.visualization import plot_power_map
+from scqat.estimators.resonator_spectroscopy_power.visualization import plot_power_map
 
 
 def _make_dataset(n_power=30, n_det=121, noise=0.0, seed=0):
@@ -51,14 +51,14 @@ def _make_dataset(n_power=30, n_det=121, noise=0.0, seed=0):
     return ds, dict(center_det=center_det, power=power, p_trans=p_trans, lo=lo)
 
 
-class TestResonatorSpectroscopyVsPower:
+class TestResonatorSpectroscopyPower:
     def test_aggregated_and_subpackage_imports_match(self):
-        assert ResonatorSpectroscopyVsPowerEstimator is SubpkgEstimator
-        assert ResonatorSpectroscopyVsPowerEstimator.estimator_name == "resonator_spectroscopy_vs_power"
+        assert ResonatorSpectroscopyPowerEstimator is SubpkgEstimator
+        assert ResonatorSpectroscopyPowerEstimator.estimator_name == "resonator_spectroscopy_power"
 
     def test_results_structure_and_good_points(self):
         ds, _ = _make_dataset()
-        results = ResonatorSpectroscopyVsPowerEstimator().extract_parameters(ds)
+        results = ResonatorSpectroscopyPowerEstimator().extract_parameters(ds)
         for key in ("power", "detuning", "center_detuning", "good", "amplitude_map",
                     "n_power", "n_good", "optimal_power", "frequency_shift",
                     "resonator_frequency", "optimal_success"):
@@ -71,7 +71,7 @@ class TestResonatorSpectroscopyVsPower:
 
     def test_center_trace_tracks_truth(self):
         ds, truth = _make_dataset()
-        results = ResonatorSpectroscopyVsPowerEstimator().extract_parameters(ds)
+        results = ResonatorSpectroscopyPowerEstimator().extract_parameters(ds)
         good = results["good"]
         centre = results["center_detuning"]
         # Fitted centres match the synthetic dip positions on the good points.
@@ -79,7 +79,7 @@ class TestResonatorSpectroscopyVsPower:
 
     def test_picks_optimal_power_in_dispersive_regime(self):
         ds, truth = _make_dataset()
-        results = ResonatorSpectroscopyVsPowerEstimator().extract_parameters(ds)
+        results = ResonatorSpectroscopyPowerEstimator().extract_parameters(ds)
         assert results["optimal_success"] is True
         opt = results["optimal_power"]
         assert np.isfinite(opt)
@@ -92,7 +92,7 @@ class TestResonatorSpectroscopyVsPower:
 
     def test_metadata_drops_bulky_arrays(self):
         ds, _ = _make_dataset()
-        estimator = ResonatorSpectroscopyVsPowerEstimator()
+        estimator = ResonatorSpectroscopyPowerEstimator()
         results = estimator.extract_parameters(ds)
         meta = estimator.extract_metadata(results)
         for dropped in ("amplitude_map", "detuning", "full_freq"):
@@ -102,7 +102,7 @@ class TestResonatorSpectroscopyVsPower:
 
     def test_plot_data_self_sufficient_and_figure(self):
         ds, _ = _make_dataset()
-        estimator = ResonatorSpectroscopyVsPowerEstimator()
+        estimator = ResonatorSpectroscopyPowerEstimator()
         results = estimator.extract_parameters(ds)
         pd = estimator.build_plot_data(ds, results)
 
@@ -115,17 +115,17 @@ class TestResonatorSpectroscopyVsPower:
         assert "optimal_power" in pd.attrs
 
         figs = estimator.generate_figures(None, None, plot_data=pd)
-        assert set(figs) == {"resonator_spectroscopy_vs_power"}
-        assert isinstance(figs["resonator_spectroscopy_vs_power"], plt.Figure)
+        assert set(figs) == {"resonator_spectroscopy_power"}
+        assert isinstance(figs["resonator_spectroscopy_power"], plt.Figure)
         plt.close("all")
 
     def test_analyze_roundtrip(self, tmp_path):
         ds, _ = _make_dataset()
-        estimator = ResonatorSpectroscopyVsPowerEstimator()
+        estimator = ResonatorSpectroscopyPowerEstimator()
         results, figs = estimator.analyze(ds, output_dir=str(tmp_path))
-        assert (tmp_path / "resonator_spectroscopy_vs_power_metadata.json").exists()
-        assert (tmp_path / "resonator_spectroscopy_vs_power_plotdata.nc").exists()
-        assert isinstance(figs["resonator_spectroscopy_vs_power"], plt.Figure)
+        assert (tmp_path / "resonator_spectroscopy_power_metadata.json").exists()
+        assert (tmp_path / "resonator_spectroscopy_power_plotdata.nc").exists()
+        assert isinstance(figs["resonator_spectroscopy_power"], plt.Figure)
 
         reloaded = estimator.load_plot_data(str(tmp_path))
         fig = plot_power_map(reloaded)
@@ -139,6 +139,6 @@ class TestResonatorSpectroscopyVsPower:
             {"I": ds["IQdata"].real, "Q": ds["IQdata"].imag},
             coords=ds.coords,
         )
-        results = ResonatorSpectroscopyVsPowerEstimator().extract_parameters(ds_iq)
+        results = ResonatorSpectroscopyPowerEstimator().extract_parameters(ds_iq)
         assert results["n_good"] >= 26
         assert results["optimal_success"] is True
