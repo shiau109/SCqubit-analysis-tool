@@ -1,4 +1,4 @@
-# AI Assistant Guidelines: SCqubit-analysis-tool
+# AI Assistant Guidelines: scqat
 
 This repository (`scqat`) analyzes superconducting-qubit data. The data may come
 from **either an experiment or a simulation** — estimators must be blind to which.
