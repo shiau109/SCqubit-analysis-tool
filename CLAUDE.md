@@ -57,6 +57,18 @@ import time.
    your implementation plan first. Do NOT modify any existing code until
    receiving explicit approval from the user.
 
+## Release checklist
+Cutting a release = **two steps, in this order**:
+1. Bump `version` in `pyproject.toml` to `X.Y.Z` and commit.
+2. Tag that commit `vX.Y.Z`.
+
+The pyproject version MUST equal the tag: dependents (SCQO) declare real floors
+like `scqat>=0.1.5`, resolved from package metadata (`importlib.metadata`), so a
+tag whose tree still carries the old version breaks every downstream install.
+History: tags v0.1.0–v0.1.4 all shipped metadata `0.1.0` (floors were unusable);
+metadata and tags agree from **v0.1.5** on. Never retag or rewrite an existing
+tag — if a tagged tree has the wrong version, cut the next number.
+
 ## Estimator Output Contract
 An estimator produces **one mandatory artifact and two optional ones**:
 
