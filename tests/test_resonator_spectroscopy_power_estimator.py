@@ -162,3 +162,138 @@ class TestResonatorSpectroscopyPower:
         assert res["n_good"] >= ref["n_good"] - 1
         good = res["good"]
         assert np.allclose(res["center_detuning"][good], truth["center_det"][good], atol=0.1e6)
+
+
+class TestChainProvenance:
+    """Per-power (digital_amp, chain_setting, chain_name) coords — the ONE shared
+    provenance form both scqo punchouts emit — pass through to plot_data data_vars
+    and draw the amp/chain subplot under the map (two-row figure, shared power
+    axis). The v0.1.6-dev scalar form (power_ref/amp_ref/chain_label secondary
+    axis, power_offset_dbm axis shift) was removed before release: legacy coords
+    are simply ignored."""
+
+    def _stepped_dataset(self):
+        ds, truth = _make_dataset()
+        n = ds.sizes["power"]
+        digital_amp = np.clip(0.5 - 0.01 * np.arange(n), 0.05, 0.5)
+        chain_setting = np.repeat(np.arange((n + 1) // 2) * 2.0, 2)[:n]  # even att steps
+        return ds.assign_coords(
+            digital_amp=("power", digital_amp),
+            chain_setting=("power", chain_setting),
+            chain_name="output_att (dB)",
+        ), digital_amp, chain_setting
+
+    def test_plot_data_carries_per_power_vars(self):
+        ds, digital_amp, chain_setting = self._stepped_dataset()
+        est = ResonatorSpectroscopyPowerEstimator()
+        pd = est.build_plot_data(ds, est.extract_parameters(ds))
+        assert np.allclose(pd["digital_amp"].values, digital_amp)
+        assert np.allclose(pd["chain_setting"].values, chain_setting)
+        assert pd.attrs["chain_name"] == "output_att (dB)"
+
+    def test_figure_gains_the_chain_subplot(self):
+        ds, _, _ = self._stepped_dataset()
+        est = ResonatorSpectroscopyPowerEstimator()
+        pd = est.build_plot_data(ds, est.extract_parameters(ds))
+        fig = plot_power_map(pd)
+        ylabels = [a.get_ylabel() for a in fig.axes]
+        assert any("digital amp" in lbl for lbl in ylabels)      # bottom-left axis
+        assert any("output_att" in lbl for lbl in ylabels)       # bottom-right twin
+        # the x-label moved to the bottom row
+        xlabels = {a.get_xlabel() for a in fig.axes}
+        assert "Readout power (dB)" in xlabels
+        plt.close(fig)
+
+    def test_subplot_roundtrips_through_netcdf(self, tmp_path):
+        ds, _, _ = self._stepped_dataset()
+        est = ResonatorSpectroscopyPowerEstimator()
+        pd = est.build_plot_data(ds, est.extract_parameters(ds))
+        path = tmp_path / "plotdata.nc"
+        pd.to_netcdf(path)
+        back = xr.load_dataset(path)
+        fig = plot_power_map(back)
+        assert any("digital amp" in a.get_ylabel() for a in fig.axes)
+        plt.close(fig)
+
+    def test_amp_sweep_shape_renders_constant_chain(self):
+        # the fast punchout's shape: amp sweeps down, the chain setting is FLAT
+        ds, _ = _make_dataset()
+        n = ds.sizes["power"]
+        power = ds["power"].values
+        ds = ds.assign_coords(
+            digital_amp=("power", 0.5 * 10.0 ** ((power - power[-1]) / 20.0)),
+            chain_setting=("power", np.full(n, 18.0)),
+            chain_name="output_att (dB)",
+        )
+        est = ResonatorSpectroscopyPowerEstimator()
+        pd = est.build_plot_data(ds, est.extract_parameters(ds))
+        fig = plot_power_map(pd)
+        assert any("digital amp" in a.get_ylabel() for a in fig.axes)
+        assert any("output_att" in a.get_ylabel() for a in fig.axes)
+        plt.close(fig)
+
+    def test_absent_coords_leave_figure_unchanged(self):
+        ds, _ = _make_dataset()
+        est = ResonatorSpectroscopyPowerEstimator()
+        pd = est.build_plot_data(ds, est.extract_parameters(ds))
+        assert "digital_amp" not in pd.data_vars
+        fig = plot_power_map(pd)
+        assert len(fig.axes) == 2  # map + colorbar only, no subplot row
+        assert "\n" not in fig.axes[0].get_title()
+        assert fig.axes[0].get_xlabel() == "Readout power (dB)"
+        plt.close(fig)
+
+    def test_legacy_scalar_coords_are_ignored(self):
+        # pre-release plumbing (power_ref/amp_ref/chain_label/power_offset_dbm) is
+        # gone: such coords neither land in attrs nor alter the figure
+        ds, _ = _make_dataset()
+        ds = ds.assign_coords(power_ref=-25.0, amp_ref=0.47, power_offset_dbm=-6.0,
+                              chain_label="output_att=18 dB")
+        est = ResonatorSpectroscopyPowerEstimator()
+        pd = est.build_plot_data(ds, est.extract_parameters(ds))
+        for key in ("power_ref", "amp_ref", "chain_label", "power_offset_dbm"):
+            assert key not in pd.attrs
+        fig = plot_power_map(pd)
+        assert not fig.axes[0].child_axes  # no secondary digital-amplitude axis
+        assert "output_att=18 dB" not in fig.axes[0].get_title()
+        plt.close(fig)
+
+
+class TestAxisKindAndModeLabel:
+    """power_axis_kind labels the x-axis, mode_label tags the mechanism in the
+    title — attached by both scqo punchouts (absent -> old rendering)."""
+
+    def test_labels_pass_through_and_render(self):
+        ds, _ = _make_dataset()
+        ds = ds.assign_coords(power_axis_kind="absolute dBm",
+                              mode_label="amplitude sweep (fast)")
+        est = ResonatorSpectroscopyPowerEstimator()
+        pd = est.build_plot_data(ds, est.extract_parameters(ds))
+        assert pd.attrs["power_axis_kind"] == "absolute dBm"
+        assert pd.attrs["mode_label"] == "amplitude sweep (fast)"
+
+        fig = plot_power_map(pd)
+        ax = fig.axes[0]
+        assert "absolute dBm" in ax.get_xlabel()
+        assert "amplitude sweep (fast)" in ax.get_title()
+        # the optimal-marker label carries the absolute unit
+        labels = [t.get_text() for t in ax.get_legend().get_texts()]
+        assert any("dBm" in l for l in labels)
+        plt.close(fig)
+
+    def test_mode_label_on_chain_stepped_figure(self):
+        ds, _ = _make_dataset()
+        n = ds.sizes["power"]
+        ds = ds.assign_coords(
+            digital_amp=("power", np.full(n, 0.5)),
+            chain_setting=("power", np.arange(n, dtype=float)),
+            chain_name="output_att (dB)",
+            power_axis_kind="absolute dBm",
+            mode_label="chain-stepped (slow)",
+        )
+        est = ResonatorSpectroscopyPowerEstimator()
+        pd = est.build_plot_data(ds, est.extract_parameters(ds))
+        fig = plot_power_map(pd)
+        assert "chain-stepped (slow)" in fig.axes[0].get_title()
+        assert any("absolute dBm" in a.get_xlabel() for a in fig.axes)  # bottom subplot label
+        plt.close(fig)

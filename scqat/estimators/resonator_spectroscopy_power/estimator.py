@@ -34,6 +34,16 @@ Coordinates:
     - full_freq : (detuning,) absolute readout frequency (Hz). Optional; when
                   present the centre trace is also reported in absolute frequency
                   and the resonator frequency at the optimal power is reported.
+    - digital_amp   : (power,), optional – per-point digital amplitude of the
+                  sweep; drawn as an amp/chain subplot under the map.
+    - chain_setting : (power,), optional – per-point chain value (QM
+                  full_scale_power_dbm / Qblox output_att; constant for a
+                  fixed-chain amplitude sweep), labeled by ``chain_name``.
+    - chain_name : scalar str, optional – axis label for ``chain_setting``.
+    - power_axis_kind : scalar str, optional – x-axis label suffix
+                  (e.g. "absolute dBm").
+    - mode_label : scalar str, optional – mechanism tag added to the title
+                  (e.g. "amplitude sweep (fast)" / "chain-stepped (slow)").
 Data variables:
     - IQdata : (power, detuning) – complex demodulated signal (I + iQ), **or**
     - I, Q   : (power, detuning) – the two quadratures, combined into IQdata.
@@ -366,6 +376,27 @@ class ResonatorSpectroscopyPowerEstimator(BaseEstimator):
             attrs["resonator_frequency"] = float(results["resonator_frequency"])
         else:
             attrs["has_full_freq"] = 0
+
+        # Optional acquisition-chain provenance (attached by the caller as coords,
+        # e.g. the scqo punchouts — both emit the SAME form). Pure pass-through —
+        # provenance-blind; absent coords change nothing.
+        # digital_amp(power) + chain_setting(power) + a chain_name label are drawn
+        # as an amp/chain subplot under the map; power_axis_kind labels the x-axis
+        # and mode_label tags the mechanism in the title.
+        for key in ("digital_amp", "chain_setting"):
+            if key in dataset.coords:
+                arr = np.asarray(dataset.coords[key].values, dtype=float)
+                if arr.shape == power.shape:
+                    data_vars[key] = ("power", arr)
+        if "chain_name" in dataset.coords:
+            name = str(dataset.coords["chain_name"].values)
+            if name:
+                attrs["chain_name"] = name
+        for key in ("power_axis_kind", "mode_label"):
+            if key in dataset.coords:
+                val = str(dataset.coords[key].values)
+                if val:
+                    attrs[key] = val
 
         return xr.Dataset(data_vars, coords=coords, attrs=attrs)
 
