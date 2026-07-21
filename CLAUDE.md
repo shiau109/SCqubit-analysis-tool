@@ -107,6 +107,37 @@ anything a figure needs therefore has to be put into `build_plot_data()`.
 `generate_figures` so older estimators keep working; new/migrated estimators must
 ignore them.)
 
+## Multi-method estimators (N approaches, one physics)
+
+When more than one analysis approach can extract the same physical parameters
+(reference implementation: `estimators/resonator_spectroscopy/` — `lorentzian`
+joint-background fit vs `circle` Probst notch fit), structure it as follows:
+
+1. **Still ONE estimator per experiment.** Approaches are *method strategy
+   objects* in a `methods/` subpackage (`methods/base.py` ABC + one module per
+   method + a `METHODS` registry in `methods/__init__.py`); heavy math stays in
+   `tools/` fitters. Selection is a plain `method=` kwarg on
+   `extract_parameters` (default = the cheap/robust method).
+2. **Two-tier result contract.** The estimator declares `COMMON_KEYS` (same
+   name ⇒ same meaning AND unit in every method) and validates them right after
+   `extract()`; orchestration (SCQO) may rely only on those. Everything else is
+   method-owned extras, consumed downstream only via `if key in results`. Never
+   reuse a key name across methods with a different meaning; error keys are
+   common-but-best-effort (NaN allowed).
+3. **Provenance.** `results["method"]` (→ metadata JSON) and
+   `plot_data.attrs["method"]` are always stamped.
+4. **Plots are method-dependent; artifacts are not.** Each method owns its
+   plot_data variables and figure layout, but the figure dict key (and hence the
+   PNG name) is identical for all methods, plot_data stays netCDF-safe (no
+   complex variables — store I/Q float pairs), and `generate_figures` dispatches
+   on `plot_data.attrs["method"]` — never on estimator state — so a saved
+   `plotdata.nc` replots with zero re-fit.
+5. **Adding method #N** = one module in `methods/` + one registry entry (+ one
+   Literal value in the SCQO experiment's Parameters). Nothing else moves.
+6. **Cross-method test.** The estimator's test suite includes an agreement test:
+   same synthetic data → same COMMON physics within tolerance (a method changes
+   robustness, not physics).
+
 ## Implementation Guide
 
 ### Adding a new data format

@@ -170,7 +170,7 @@ class ResonatorSpectroscopyPowerEstimator(BaseEstimator):
 
         Each slice is handed to ``ResonatorSpectroscopyEstimator.extract_parameters``
         (single inverted Lorentzian on the readout power ``|IQ|^2``); ``kwargs``
-        such as ``baseline_order`` / ``baseline_quantile`` are forwarded to it.
+        such as ``method`` / ``baseline_order`` are forwarded to it.
 
         Acceptance per power point happens in two stages: (1) the fitted dip centre
         must lie strictly **inside** the swept detuning window, and (2) the dip
