@@ -138,6 +138,39 @@ joint-background fit vs `circle` Probst notch fit), structure it as follows:
    same synthetic data → same COMMON physics within tolerance (a method changes
    robustness, not physics).
 
+## Layered analyses (an experiment that contains another experiment's fit)
+
+**Estimators never call estimators.** When an analysis needs another
+experiment's fit as an inner step (the vs-flux/vs-power maps fit a resonator
+dip per slice), the shared piece is a *pure per-trace reduction* — and by rule
+it lives in `tools/` (reference: `tools/dip_fit.py`, `fit_dip()` +
+`DIP_METHODS` + `DIP_KNOBS`), consumed by every estimator in the family.
+Estimator→estimator calls conflate the experiment-level contract
+(metadata/plot_data/figures) with plain math, and their flat `**kwargs`
+namespace makes inner options unreachable or silently mis-routed.
+
+1. **"Same experiment + extra sweep axis" shares the reduction, not the
+   estimator.** Only the per-trace fit is common; how it is driven (candidate
+   seeding from the 2-D map, local windows, fallbacks), the cross-axis
+   acceptance gates, the second-stage model, and the artifacts are all
+   sweep-specific and belong to the swept experiment's own estimator.
+2. **Flat, fully-owned kwarg surface.** The estimator's primary method axis is
+   `method`; a secondary axis is `<thing>_method` (e.g. `dip_method`); every
+   kwarg is documented in `extract_parameters`'s docstring. No prefixes, no
+   forwarding of "whatever is left over".
+3. **Validate before loops.** tools expose their valid-knob sets
+   (`validate_dip_kwargs`); callers validate ONCE before any per-slice loop, so
+   a typo'd kwarg raises instead of being swallowed by per-slice `try/except`
+   fallbacks.
+4. **Required keys only.** A caller of a tools reduction may rely only on its
+   documented required keys (`detuning`/`fwhm`/`success` for `fit_dip`);
+   method-owned extras (e.g. `amplitude`) via `.get` with defined degraded
+   behavior.
+5. **Provenance.** Every resolved `*_method` value is stamped in results, the
+   metadata JSON, and `plot_data.attrs` (strings; bools as int 0/1; absent
+   axes omitted). SCQO mirrors each axis as a `Literal` kept equal to the
+   registry by a sync test (SCQO `tests/test_estimator_method_sync.py`).
+
 ## Implementation Guide
 
 ### Adding a new data format

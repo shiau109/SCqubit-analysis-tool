@@ -7,6 +7,7 @@ to remain discoverable.
 """
 
 from .function_fitting import FunctionFitting, register_fitter, get_fitter
+from .dip_fit import DIP_KNOBS, DIP_METHODS, fit_dip, validate_dip_kwargs
 from . import fit_abscos  # noqa: F401
 from . import fit_cosine  # noqa: F401
 from . import fit_damped_oscillation  # noqa: F401

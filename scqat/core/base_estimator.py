@@ -42,6 +42,19 @@ def _json_safe(obj: Any) -> Any:
     return f"<skipped: {type(obj).__name__}>"
 
 
+def with_iqdata(dataset: xr.Dataset) -> xr.Dataset:
+    """Return a dataset that has an ``IQdata`` variable, building it from
+    ``I``/``Q`` when only the quadratures are present. Shared by every
+    estimator whose contract accepts either form."""
+    if "IQdata" in dataset:
+        return dataset
+    if "I" in dataset and "Q" in dataset:
+        return dataset.assign(IQdata=dataset["I"] + 1j * dataset["Q"])
+    raise ValueError(
+        "dataset requires an 'IQdata' variable, or both 'I' and 'Q'."
+    )
+
+
 class BaseEstimator(ABC):
     """
     Abstract base class for scqat experimental/simulation estimators.

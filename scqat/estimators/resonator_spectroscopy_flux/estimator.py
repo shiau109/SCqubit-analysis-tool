@@ -1,37 +1,41 @@
 """
-Resonator Spectroscopy vs Flux — Full Analysis (composite)
-==========================================================
-Two-stage resonator-flux analysis that chains two existing estimators and owns the
-**canonical combined figure**, so every consumer (e.g. QM / QBLOX control repos)
-reconstructs an *identical* plot from the saved plot data instead of
-re-implementing plotting:
+Resonator Spectroscopy vs Flux — Full Analysis
+==============================================
+The ONE estimator for the resonator-vs-flux experiment. Two internal stages
+(each also importable as a plain function by control repos):
 
-  1. :class:`~scqat.estimators.resonator_spectroscopy_vs_flux.ResonatorSpectroscopyVsFluxEstimator`
-     collapses the 2-D ``(flux_bias, detuning)`` map into a 1-D resonator
-     ``center_frequency(flux)`` trace (single inverted-Lorentzian dip fit per flux
-     slice), then
-  2. :class:`~scqat.estimators.resonator_flux_dispersion.ResonatorFluxDispersionEstimator`
-     fits that trace with the full flux-tunable-transmon dispersive model to obtain
-     the sweet spot, flux period (``dv_phi0``), bare resonator ``f_r0`` and the
-     (conditional) coupling ``g``.
+  1. :func:`.dips.track_dips` collapses the 2-D ``(flux_bias, detuning)`` map
+     into a 1-D resonator ``center_frequency(flux)`` trace (per-slice dip fit
+     via the family-shared :func:`scqat.tools.dip_fit.fit_dip` — ``dip_method``
+     selects ``lorentzian``/``circle`` — with edge-margin + MAD acceptance),
+     then
+  2. :func:`.trace_fit.fit_flux_trace` fits that trace with the selected
+     flux-dependence model (``method="dispersive"`` — the full
+     flux-tunable-transmon model — or the model-light ``"sine"``; strategy
+     objects in ``methods/``) to obtain the sweet-spot point, flux period
+     (``dv_phi0``), and, for the dispersive method, the bare resonator ``f_r0``
+     and (conditional) coupling ``g``.
 
-Turning the dispersive outputs into instrument/state quantities (idle offset,
-min-frequency point, ``phi0`` in current, QUAM state writes) is **out of scope** —
-that belongs to the calling repo, which also owns the raw-file→Dataset adapter.
+The estimator owns the **canonical combined figure**, so every consumer (e.g.
+QM / QBLOX control repos) reconstructs an *identical* plot from the saved plot
+data instead of re-implementing plotting. Turning the fit outputs into
+instrument/state quantities (idle offset, min-frequency point, ``phi0`` in
+current, QUAM state writes) is **out of scope** — that belongs to the calling
+repo, which also owns the raw-file→Dataset adapter.
 
 ``results`` is nested as ``{"vs_flux": <stage-1 results>, "dispersion":
 <stage-2 results>}`` so the two stages' keys (e.g. the per-flux ``success`` array
-vs. the dispersive scalar ``success``) stay unambiguous.
+vs. the flux-model scalar ``success``) stay unambiguous.
 
 Expected xarray.Dataset contract
 --------------------------------
-Identical to the stage-1 estimator (the ``qubit`` dimension already removed):
+See :mod:`.dips` (the ``qubit`` dimension already removed):
 
 Coordinates:
     - flux_bias : 1-D float array – applied flux bias (V).
     - detuning  : 1-D float array – readout-frequency detuning from the LO (Hz).
     - full_freq : (detuning,) absolute readout frequency (Hz). Optional; when
-                  present the centre trace and dispersive fit are reported in
+                  present the centre trace and flux-model fit are reported in
                   absolute frequency.
 Data variables:
     - IQdata : (flux_bias, detuning) – complex demodulated signal (I + iQ), **or**
@@ -45,22 +49,25 @@ import matplotlib.pyplot as plt
 import xarray as xr
 
 from scqat.core.base_estimator import BaseEstimator
-from scqat.estimators.resonator_spectroscopy_vs_flux import ResonatorSpectroscopyVsFluxEstimator
-from scqat.estimators.resonator_flux_dispersion import ResonatorFluxDispersionEstimator
 
+from .dips import check_dataset, dips_plot_data, track_dips
+from .methods import METHODS
+from .trace_fit import fit_flux_trace
 from .visualization import plot_combined
 
 
-# kwargs consumed by the dispersive (stage-2) fit; everything else flows to stage 1.
-_DISPERSION_KWARGS = ("f_q_max", "fit_f_q_max")
+# kwargs consumed by the flux-model (stage-2) fit; everything else (n_sigma,
+# edge_margin_frac, per-slice dip kwargs) flows to stage 1.
+_DISPERSION_KWARGS = ("method", "f_q_max", "fit_f_q_max")
 
 
 class ResonatorSpectroscopyFluxEstimator(BaseEstimator):
-    """Composite resonator-vs-flux estimator: dip-vs-flux trace + dispersive fit.
+    """Composite resonator-vs-flux estimator: dip-vs-flux trace + flux-model fit.
 
-    The combined figure (raw ``|IQ|`` map + per-flux fitted centres + dispersive
-    fit curve + sweet spot) is built **only** from the merged ``plot_data``, so it
-    is reconstructable by any consumer without rerunning the analysis.
+    The combined figure (raw ``|IQ|`` map + per-flux fitted centres + flux-model
+    fit curve + sweet-spot point) is built **only** from the merged
+    ``plot_data``, so it is reconstructable by any consumer without rerunning the
+    analysis.
     """
 
     estimator_name = "resonator_spectroscopy_flux"
@@ -69,23 +76,29 @@ class ResonatorSpectroscopyFluxEstimator(BaseEstimator):
     # Validation
     # ------------------------------------------------------------------
     def _check_data(self, dataset: xr.Dataset) -> None:
-        # The composite's input contract is exactly stage 1's.
-        ResonatorSpectroscopyVsFluxEstimator()._check_data(dataset)
+        check_dataset(dataset)
 
     # ------------------------------------------------------------------
     # Core extraction
     # ------------------------------------------------------------------
     def extract_parameters(self, dataset: xr.Dataset, **kwargs) -> Dict[str, Any]:
         """
-        Run the vs-flux dip fit, then the dispersive flux-dependence fit.
+        Run the vs-flux dip fit, then the selected flux-dependence fit
+        (dispersive or sine).
 
-        Keyword arguments
-        -----------------
-        f_q_max, fit_f_q_max
-            Forwarded to the dispersive (stage-2) fit (see
-            :class:`ResonatorFluxDispersionEstimator`).
-        n_sigma, baseline_order, baseline_quantile, ...
-            Forwarded to the vs-flux (stage-1) fit.
+        Keyword arguments (the estimator's FLAT, fully-owned surface)
+        -------------------------------------------------------------
+        method, f_q_max, fit_f_q_max
+            The flux-model (stage-2) fit — ``method`` selects ``"dispersive"``
+            (default) or ``"sine"`` (see :mod:`.trace_fit`).
+        dip_method, baseline_order, delay
+            The per-slice dip fit (see :func:`scqat.tools.dip_fit.fit_dip`):
+            ``dip_method`` selects ``"lorentzian"`` (default) or ``"circle"``;
+            the rest are that method's knobs.
+        n_sigma, edge_margin_frac, min_dip_depth, local_window_frac
+            Stage-1 acceptance tunables (see :func:`.dips.track_dips`).
+
+        Unknown kwargs raise ValueError before any fitting.
 
         Returns
         -------
@@ -93,11 +106,17 @@ class ResonatorSpectroscopyFluxEstimator(BaseEstimator):
             ``{"vs_flux": <stage-1 results>, "dispersion": <stage-2 results>}``.
         """
         disp_kwargs = {k: kwargs.pop(k) for k in list(kwargs) if k in _DISPERSION_KWARGS}
+        # Fail loudly up front on a bad flux-model method — before the (slower)
+        # stage-1 slice loop runs.
+        model = disp_kwargs.get("method", "dispersive")
+        if model not in METHODS:
+            raise ValueError(f"Unknown method {model!r}; available: {sorted(METHODS)}")
 
-        vs = ResonatorSpectroscopyVsFluxEstimator().extract_parameters(dataset, **kwargs)
+        vs = track_dips(dataset, **kwargs)
 
-        # Build the centre-frequency(flux) trace for the dispersive fit: prefer the
-        # absolute frequency when available, and feed only the kept (good) points.
+        # Build the centre-frequency(flux) trace for the flux-model fit: prefer
+        # the absolute frequency when available, and feed only the kept (good)
+        # points.
         center = np.asarray(vs.get("center_full_freq", vs["center_detuning"]), dtype=float)
         trace = xr.Dataset(
             {
@@ -106,7 +125,7 @@ class ResonatorSpectroscopyFluxEstimator(BaseEstimator):
             },
             coords={"flux_bias": np.asarray(vs["flux_bias"], dtype=float)},
         )
-        disp = ResonatorFluxDispersionEstimator().extract_parameters(trace, **disp_kwargs)
+        disp = fit_flux_trace(trace, **disp_kwargs)
 
         return {"vs_flux": vs, "dispersion": disp}
 
@@ -114,47 +133,57 @@ class ResonatorSpectroscopyFluxEstimator(BaseEstimator):
     # Metadata + plot data
     # ------------------------------------------------------------------
     def extract_metadata(self, results: Dict[str, Any]) -> Dict[str, Any]:
-        """Project the key scalars from both stages for the persisted metadata."""
+        """Project the key scalars from both stages for the persisted metadata.
+
+        The COMMON flux-model keys are always present; the dispersive-only extras
+        (``f_r0``/``g``/``f_q_max``) are included only when the dispersive method
+        produced them (the sine method has no such physics)."""
         vs = results["vs_flux"]
         disp = results["dispersion"]
-        return {
+        meta: Dict[str, Any] = {
             "n_flux": int(vs["n_flux"]),
             "n_good": int(vs["n_good"]),
             "n_outlier": int(vs["n_outlier"]),
+            "method": disp.get("method", "dispersive"),
+            "dip_method": str(vs["dip_method"]),
             "sweet_spot_flux": float(disp["sweet_spot_flux"]),
-            "sweet_spot_freq": float(disp["sweet_spot_freq"]),
+            "sweet_spot_res": float(disp["sweet_spot_res"]),
+            "sweet_spot_low_flux": float(disp["sweet_spot_low_flux"]),
+            "sweet_spot_low_res": float(disp["sweet_spot_low_res"]),
             "dv_phi0": float(disp["dv_phi0"]),
-            "f_r0": float(disp["f_r0"]),
-            "g": float(disp["g"]),
-            "f_q_max": float(disp["f_q_max"]),
-            "f_q_max_fixed": bool(disp["f_q_max_fixed"]),
             "dispersion_success": bool(disp["success"]),
         }
+        for k in ("f_r0", "g", "f_q_max"):
+            if k in disp:
+                meta[k] = float(disp[k])
+        if "f_q_max_fixed" in disp:
+            meta["f_q_max_fixed"] = bool(disp["f_q_max_fixed"])
+        return meta
 
     def build_plot_data(
         self, dataset: xr.Dataset, results: Dict[str, Any], **kwargs
     ) -> Optional[xr.Dataset]:
-        """Merge the two sub-estimators' plot data into one self-sufficient Dataset.
+        """Merge the two stages' plot data into one self-sufficient Dataset.
 
         Stage-1 plot data (2-D map + per-flux centres + good/outlier masks +
-        ``full_freq``) is the base; the dispersive fit curve is added on its own
-        dense ``fit_flux`` axis and the dispersive scalars are stored as attrs.
-        Reusing each estimator's ``build_plot_data`` keeps their plot-data schema the
-        single source of truth.
+        ``full_freq``) is the base; the flux-model fit curve is added on its own
+        dense ``fit_flux`` axis and the model scalars are stored as attrs. The
+        stage helpers (:func:`.dips.dips_plot_data` / each method's
+        ``build_plot_data``) keep the plot-data schema in one place.
         """
         vs = results["vs_flux"]
         disp = results["dispersion"]
 
-        vs_pd = ResonatorSpectroscopyVsFluxEstimator().build_plot_data(dataset, vs)
-        disp_pd = ResonatorFluxDispersionEstimator().build_plot_data(None, disp)
+        vs_pd = dips_plot_data(vs)
+        disp_pd = METHODS[disp["method"]].build_plot_data(disp)
 
         merged = vs_pd.copy()
-        # Dispersive fit curve on its own dense flux axis (independent dim).
+        # Flux-model fit curve on its own dense flux axis (independent dim).
         merged = merged.assign_coords(
             fit_flux=("fit_flux", disp_pd.coords["fit_flux"].values.astype(float))
         )
         merged["fit_freq"] = ("fit_flux", disp_pd["fit_freq"].values.astype(float))
-        # Dispersive scalars as attrs; rename 'success' to disambiguate from the
+        # Flux-model scalars as attrs; rename 'success' to disambiguate from the
         # per-flux 'success' variable carried over from stage 1.
         for k, v in disp_pd.attrs.items():
             merged.attrs["dispersion_success" if k == "success" else k] = v

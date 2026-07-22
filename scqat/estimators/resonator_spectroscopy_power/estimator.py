@@ -5,17 +5,17 @@ Reduce a 2-D resonator-spectroscopy-vs-readout-power map to a 1-D
 ``center_frequency(power)`` curve by fitting the resonator dip **power-by-power**,
 then pick the optimal readout power from where that centre stops shifting.
 
-For every readout-power slice the estimator delegates to
-:class:`~scqat.estimators.resonator_spectroscopy.ResonatorSpectroscopyEstimator`
-— the same single inverted-Lorentzian fit of the readout power ``|IQ|^2`` used for
-1-D resonator spectroscopy — and records the dip centre and linewidth. Stacking
-those per-slice centres yields the resonator centre frequency as a function of
-readout power (and its FWHM), i.e. the 2-D ``(power, detuning)`` map is collapsed
-onto a 1-D trace.
+For every readout-power slice the estimator calls the family-shared per-trace
+dip fit :func:`scqat.tools.dip_fit.fit_dip` — the same reduction used by 1-D
+resonator spectroscopy and the vs-flux map, with ``dip_method`` selecting
+``lorentzian`` (default) or ``circle`` — and records the dip centre and
+linewidth. Stacking those per-slice centres yields the resonator centre
+frequency as a function of readout power (and its FWHM), i.e. the 2-D
+``(power, detuning)`` map is collapsed onto a 1-D trace.
 
-On top of that reduction (which mirrors
-:class:`~scqat.estimators.resonator_spectroscopy_vs_flux.ResonatorSpectroscopyVsFluxEstimator`
-one-for-one, with ``power`` in place of ``flux_bias``), a second stage picks the
+On top of that reduction (which mirrors the dip-tracking stage of
+:mod:`~scqat.estimators.resonator_spectroscopy_flux` one-for-one, with ``power``
+in place of ``flux_bias``), a second stage picks the
 **optimal readout power**: the low-power dispersive regime is where
 ``center_detuning(power)`` stops shifting, so it is found where the smoothed
 ``d(center)/d(power)`` first crosses below a (negative) threshold — the same
@@ -60,9 +60,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
 
-from scqat.core.base_estimator import BaseEstimator
-from scqat.estimators.resonator_spectroscopy import ResonatorSpectroscopyEstimator
-from scqat.estimators.resonator_spectroscopy_vs_flux.estimator import _mad_outliers
+from scqat.core.base_estimator import BaseEstimator, with_iqdata
+from scqat.tools.dip_fit import fit_dip, validate_dip_kwargs
+from scqat.tools.robust import mad_outliers
 from scqat.estimators.resonator_spectroscopy_power.visualization import plot_power_map
 
 
@@ -168,9 +168,11 @@ class ResonatorSpectroscopyPowerEstimator(BaseEstimator):
         Fit the resonator dip in every ``power`` slice, stack the centres, and
         pick the optimal readout power from the centre trace.
 
-        Each slice is handed to ``ResonatorSpectroscopyEstimator.extract_parameters``
-        (single inverted Lorentzian on the readout power ``|IQ|^2``); ``kwargs``
-        such as ``method`` / ``baseline_order`` are forwarded to it.
+        Each slice is handed to the family-shared per-trace dip fit
+        :func:`scqat.tools.dip_fit.fit_dip` — ``dip_method`` selects
+        ``"lorentzian"`` (default) or ``"circle"``, and the remaining kwargs
+        (``baseline_order`` / ``delay``) are that method's knobs, validated
+        BEFORE the slice loop (unknown names raise ValueError).
 
         Acceptance per power point happens in two stages: (1) the fitted dip centre
         must lie strictly **inside** the swept detuning window, and (2) the dip
@@ -210,13 +212,25 @@ class ResonatorSpectroscopyPowerEstimator(BaseEstimator):
         smoothing_window = int(kwargs.pop("derivative_smoothing_window_num_points", 10))
         init_filter_window = int(kwargs.pop("moving_average_filter_window_num_points", 10))
         buffer_dbm = float(kwargs.pop("buffer_from_crossing_threshold_in_dbm", 1.0))
+        dip_method = str(kwargs.pop("dip_method", "lorentzian"))
+        # Fail loudly BEFORE the per-slice loop — a typo'd knob must never be
+        # swallowed by the per-slice fallback.
+        validate_dip_kwargs(dip_method, kwargs)
 
-        ds = ResonatorSpectroscopyEstimator._with_iqdata(dataset)
+        ds = with_iqdata(dataset)
         power = ds.coords["power"].values.astype(float)
         detuning = ds.coords["detuning"].values.astype(float)
         has_full_freq = "full_freq" in ds.coords
+        full_freq = (
+            ds.coords["full_freq"].values.ravel().astype(float) if has_full_freq else None
+        )
+        if dip_method == "circle" and full_freq is None:
+            raise ValueError(
+                "dip_method='circle' requires the 'full_freq' coordinate "
+                "(absolute readout frequency in Hz)."
+            )
+        iq_map = ds["IQdata"].transpose("power", "detuning").values
 
-        single = ResonatorSpectroscopyEstimator()
         n_power = len(power)
         center_detuning = np.full(n_power, np.nan)
         center_full_freq = np.full(n_power, np.nan)
@@ -225,15 +239,17 @@ class ResonatorSpectroscopyPowerEstimator(BaseEstimator):
         success = np.zeros(n_power, dtype=bool)
 
         for k in range(n_power):
-            sl = ds.isel(power=k)
             try:
-                r = single.extract_parameters(sl, **kwargs)
+                r = fit_dip(detuning, iq_map[k], full_freq=full_freq,
+                            method=dip_method, **kwargs)
             except Exception:
-                # Leave NaN / False for this power point and carry on.
+                # Leave NaN / False for this power point and carry on
+                # (fit-domain failure only: kwargs were validated up front).
                 continue
             center_detuning[k] = r["detuning"]
             fwhm[k] = r["fwhm"]
-            dip_amplitude[k] = r["amplitude"]
+            # Method-owned extra — only lorentzian reports a dip amplitude.
+            dip_amplitude[k] = r.get("amplitude", np.nan)
             success[k] = bool(r["success"])
             if has_full_freq and "full_freq" in r:
                 center_full_freq[k] = r["full_freq"]
@@ -246,7 +262,7 @@ class ResonatorSpectroscopyPowerEstimator(BaseEstimator):
 
         # 2-D |IQ| amplitude map, oriented (power, detuning) — kept for plotting,
         # and its per-row median doubles as the row's baseline scale below.
-        amplitude_map = np.abs(ds["IQdata"].transpose("power", "detuning").values)
+        amplitude_map = np.abs(iq_map)
 
         # (2) Robust outlier rejection on the dip width and amplitude. The measured
         # |IQ| grows with the readout drive, so rows carry a power-dependent overall
@@ -259,8 +275,8 @@ class ResonatorSpectroscopyPowerEstimator(BaseEstimator):
         # leaving the flags as before.
         row_scale = np.quantile(amplitude_map, 0.9, axis=1) ** 2
         rel_amp = np.abs(dip_amplitude) / np.maximum(row_scale, np.finfo(float).tiny)
-        outlier_fwhm, fwhm_med, fwhm_mad = _mad_outliers(fwhm, valid, n_sigma)
-        outlier_amp, amp_med, amp_mad = _mad_outliers(rel_amp, valid, n_sigma)
+        outlier_fwhm, fwhm_med, fwhm_mad = mad_outliers(fwhm, valid, n_sigma)
+        outlier_amp, amp_med, amp_mad = mad_outliers(rel_amp, valid, n_sigma)
         outlier = valid & (outlier_fwhm | outlier_amp)
         good = valid & ~outlier
 
@@ -300,6 +316,7 @@ class ResonatorSpectroscopyPowerEstimator(BaseEstimator):
             "in_window": in_window,
             "outlier": outlier,
             "good": good,
+            "dip_method": dip_method,
             "fwhm_median": fwhm_med,
             "fwhm_mad": fwhm_mad,
             "dip_amplitude_median": amp_med,
@@ -358,6 +375,7 @@ class ResonatorSpectroscopyPowerEstimator(BaseEstimator):
         }
         coords: Dict[str, Any] = {"power": power, "detuning": detuning}
         attrs: Dict[str, Any] = {
+            "dip_method": str(results["dip_method"]),
             "n_power": int(results["n_power"]),
             "n_success": int(results["n_success"]),
             "n_good": int(results["n_good"]),

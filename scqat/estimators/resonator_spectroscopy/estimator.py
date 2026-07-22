@@ -51,7 +51,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
 
-from scqat.core.base_estimator import BaseEstimator
+from scqat.core.base_estimator import BaseEstimator, with_iqdata
 from scqat.estimators.resonator_spectroscopy.methods import METHODS
 
 #: Tier-1 keys every method must return — the only keys orchestration may
@@ -69,20 +69,8 @@ class ResonatorSpectroscopyEstimator(BaseEstimator):
     estimator_name = "resonator_spectroscopy"
 
     # ------------------------------------------------------------------
-    # IQ assembly + validation
+    # Validation
     # ------------------------------------------------------------------
-    @staticmethod
-    def _with_iqdata(dataset: xr.Dataset) -> xr.Dataset:
-        """Return a dataset that has an ``IQdata`` variable, building it from
-        ``I``/``Q`` when only the quadratures are present."""
-        if "IQdata" in dataset:
-            return dataset
-        if "I" in dataset and "Q" in dataset:
-            return dataset.assign(IQdata=dataset["I"] + 1j * dataset["Q"])
-        raise ValueError(
-            "ResonatorSpectroscopyEstimator requires an 'IQdata' variable, or both 'I' and 'Q'."
-        )
-
     def _check_data(self, dataset: xr.Dataset) -> None:
         if "detuning" not in dataset.coords:
             raise ValueError(
@@ -96,7 +84,7 @@ class ResonatorSpectroscopyEstimator(BaseEstimator):
     @classmethod
     def _arrays(cls, dataset: xr.Dataset) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
         """Extract (detuning, complex iq, full_freq-or-None) once, uniformly."""
-        ds = cls._with_iqdata(dataset)
+        ds = with_iqdata(dataset)
         detuning = ds.coords["detuning"].values.astype(float)
         iq = ds["IQdata"].values.ravel()
         full_freq = None

@@ -3,7 +3,8 @@
 Draws, on one absolute-frequency axis (or detuning when ``full_freq`` is absent):
   * the 2-D ``|IQ|`` amplitude map (raw data) over (flux, frequency),
   * the per-flux fitted resonator centres (kept points; rejected ones as red x),
-  * the dispersive ``center_frequency(flux)`` fit curve and the sweet-spot marker.
+  * the fitted ``center_frequency(flux)`` curve (dispersive or sine) and the
+    sweet-spot marker.
 
 Everything is read from the merged ``plot_data`` Dataset assembled by the composite
 estimator — no recomputation — so any consumer redraws an identical figure.
@@ -25,7 +26,7 @@ def plot_combined(plot_data: xr.Dataset, ax: Optional[plt.Axes] = None) -> plt.F
         The merged Dataset from
         :meth:`ResonatorSpectroscopyFluxEstimator.build_plot_data` — carries the
         2-D ``amplitude`` map, the per-flux centres + ``good``/``outlier`` masks,
-        the dispersive ``fit_freq`` curve, and the sweet spot in ``attrs``.
+        the ``fit_freq`` curve, and the sweet-spot point in ``attrs``.
     ax : matplotlib.axes.Axes, optional
         Draw onto an existing axis; a new figure/axis is created when omitted.
 
@@ -66,19 +67,25 @@ def plot_combined(plot_data: xr.Dataset, ax: Optional[plt.Axes] = None) -> plt.F
         ax.plot(flux[outlier], centers[outlier], "x", color="red", ms=7, mew=1.5,
                 label="rejected")
 
-    # (3) Dispersive fit curve + sweet spot.
+    # (3) Flux-model fit curve + sweet-spot point.
     if "fit_flux" in plot_data.coords and "fit_freq" in plot_data:
         fit_flux = plot_data.coords["fit_flux"].values.astype(float)
         fit_freq = plot_data["fit_freq"].values.astype(float)
         if fit_freq.size and np.isfinite(fit_freq).any():
+            method = str(plot_data.attrs.get("method", "dispersive"))
             # White halo under an orange line so it reads over the colormap.
             ax.plot(fit_flux, fit_freq / scale, "-", color="white", lw=3.0)
-            ax.plot(fit_flux, fit_freq / scale, "-", color="C1", lw=1.5, label="dispersive fit")
-    ss_flux = float(plot_data.attrs.get("sweet_spot_flux", np.nan))
-    ss_freq = float(plot_data.attrs.get("sweet_spot_freq", np.nan))
-    if np.isfinite(ss_flux) and np.isfinite(ss_freq):
-        ax.plot([ss_flux], [ss_freq / scale], "*", color="yellow", ms=15, mec="black", mew=0.6,
+            ax.plot(fit_flux, fit_freq / scale, "-", color="C1", lw=1.5, label=f"{method} fit")
+    mf_flux = float(plot_data.attrs.get("sweet_spot_flux", np.nan))
+    mf_freq = float(plot_data.attrs.get("sweet_spot_res", np.nan))
+    if np.isfinite(mf_flux) and np.isfinite(mf_freq):
+        ax.plot([mf_flux], [mf_freq / scale], "*", color="yellow", ms=15, mec="black", mew=0.6,
                 label="sweet spot")
+    ml_flux = float(plot_data.attrs.get("sweet_spot_low_flux", np.nan))
+    ml_freq = float(plot_data.attrs.get("sweet_spot_low_res", np.nan))
+    if np.isfinite(ml_flux) and np.isfinite(ml_freq):
+        ax.plot([ml_flux], [ml_freq / scale], "*", color="cyan", ms=13, mec="black", mew=0.6,
+                label="sweet spot (low)")
 
     ax.set_xlim(float(flux.min()), float(flux.max()))
     ax.set_ylim(float(yvals.min()), float(yvals.max()))
@@ -88,5 +95,51 @@ def plot_combined(plot_data: xr.Dataset, ax: Optional[plt.Axes] = None) -> plt.F
     n_flux = int(plot_data.attrs.get("n_flux", flux.size))
     ax.set_title(f"Resonator spectroscopy vs flux (kept {n_good}/{n_flux})")
     ax.legend(fontsize=8, loc="best")
+    fig.tight_layout()
+    return fig
+
+
+def plot_flux_model(plot_data: xr.Dataset) -> plt.Figure:
+    """Per-method diagnostic figure for the stage-2 trace fit alone: the fitted
+    centre trace, the flux-model curve, and the sweet-spot marker — drawn
+    entirely from a METHOD's ``plot_data`` (see ``methods/``), dispatching the
+    annotations on ``attrs["method"]``.
+
+    plot_data layout: coords ``flux_bias``/``fit_flux``; vars ``center_freq``
+    (flux_bias), ``fit_freq`` (fit_flux); attrs ``method``, ``sweet_spot_flux``,
+    ``sweet_spot_res``, ``dv_phi0``, ``success`` (+ ``f_r0``/``g``/``f_q_max``/
+    ``f_q_max_fixed`` for dispersive; ``amp``/``offset`` for sine).
+    """
+    method = str(plot_data.attrs.get("method", "dispersive"))
+    flux = plot_data.coords["flux_bias"].values.astype(float)
+    center = plot_data["center_freq"].values.astype(float)
+    fit_flux = plot_data.coords["fit_flux"].values.astype(float)
+    fit_freq = plot_data["fit_freq"].values.astype(float)
+    mf_flux = float(plot_data.attrs.get("sweet_spot_flux", np.nan))
+    mf_res = float(plot_data.attrs.get("sweet_spot_res", np.nan))
+    dv_phi0 = float(plot_data.attrs.get("dv_phi0", np.nan))
+
+    fig, ax = plt.subplots(figsize=(10, 5), dpi=120)
+    ax.plot(flux, center / 1e9, "o", ms=4, color="C0", label="fitted centre (data)")
+    if np.isfinite(fit_freq).any():
+        ax.plot(fit_flux, fit_freq / 1e9, "-", lw=1.8, color="C1",
+                label=f"{method} fit (dv_phi0={dv_phi0:.4f} V)")
+    if np.isfinite(mf_flux):
+        ax.axvline(mf_flux, color="C3", ls=":", lw=1.0,
+                   label=f"sweet spot @ {mf_flux:.4f} V, {mf_res / 1e9:.4f} GHz")
+    ml_flux = float(plot_data.attrs.get("sweet_spot_low_flux", np.nan))
+    ml_res = float(plot_data.attrs.get("sweet_spot_low_res", np.nan))
+    if np.isfinite(ml_flux):
+        ax.axvline(ml_flux, color="C9", ls="--", lw=1.0,
+                   label=f"sweet spot (low) @ {ml_flux:.4f} V, {ml_res / 1e9:.4f} GHz")
+
+    ax.set_xlabel("Flux bias (V)")
+    ax.set_ylabel("Resonator centre frequency (GHz)")
+    # dispersive-only caveat: g is conditional on the assumed f_q_max.
+    cond = ""
+    if method == "dispersive" and plot_data.attrs.get("f_q_max_fixed", 1) != 0:
+        cond = " (g conditional on assumed f_q_max)"
+    ax.set_title(f"Resonator flux model — {method}{cond}")
+    ax.legend(fontsize=8)
     fig.tight_layout()
     return fig
