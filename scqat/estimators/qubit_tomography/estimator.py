@@ -27,7 +27,7 @@ import xarray as xr
 import matplotlib.pyplot as plt
 
 from scqat.core.base_estimator import BaseEstimator
-from scqat.estimators.state_discrimination import StateDiscriminationEstimator
+from scqat.tools.discriminate import discriminate_states, validate_discriminate_kwargs
 
 
 class QubitTomographyEstimator(BaseEstimator):
@@ -42,25 +42,32 @@ class QubitTomographyEstimator(BaseEstimator):
         for coord in ("basis", "sym", "gate_count", "shot_idx", "prepared_state", "train_shot_idx"):
             if coord not in dataset.coords:
                 raise ValueError(f"QubitTomographyEstimator requires coordinate '{coord}'")
+        if dataset.sizes.get("prepared_state", 0) < 2:
+            raise ValueError(
+                "QubitTomographyEstimator requires at least the two prepared "
+                "training states 0 and 1."
+            )
 
     def extract_parameters(self, dataset: xr.Dataset, **kwargs) -> Dict[str, Any]:
-        # 1. Train GMM classifier on the training data
-        sd = StateDiscriminationEstimator()
-        
-        # Prepare training dataset for StateDiscriminationEstimator
-        train_ds = xr.Dataset(
-            {
-                "I": dataset["I_train"],
-                "Q": dataset["Q_train"]
-            }
-        ).rename({"train_shot_idx": "shot_idx"})
-        
-        sd_res = sd.extract_parameters(train_ds, **kwargs)
+        """Kwargs — flat and fully owned; unknown names raise:
+        ``user_mean`` / ``user_std`` / ``outlier_sigma``, the knobs of
+        :func:`scqat.tools.discriminate.discriminate_states`."""
+        validate_discriminate_kwargs(kwargs)
+
+        # 1. Train GMM classifier on the training shots, one row per prepared
+        # state (the ``(prepared_state, train_shot_idx)`` variables are already
+        # array-shaped — no coordinate-rename dance needed for a pure reduction).
+        states = dataset.coords["prepared_state"].values
+        I_train = np.stack([dataset["I_train"].sel(prepared_state=s).values.ravel() for s in states])
+        Q_train = np.stack([dataset["Q_train"].sel(prepared_state=s).values.ravel() for s in states])
+        sd_res = discriminate_states(I_train, Q_train, **kwargs)
         centers = sd_res["trained_paras"]["mean"]  # shape (2, 2)
-        counts = sd_res["direct_counts"]
-        
-        # Resolve center mapping
-        if counts.shape == (2, 2) and (counts[0, 0] + counts[1, 1] < counts[0, 1] + counts[1, 0]):
+        counts = sd_res["direct_counts"]           # fixed (n_state, n_center)
+
+        # Resolve center mapping. direct_counts has a guaranteed
+        # (n_state, n_center) shape — a centre that captured no shot is a zero
+        # column, so the diagonal reads below never index out of range.
+        if counts[0, 0] + counts[1, 1] < counts[0, 1] + counts[1, 0]:
             mean_0 = centers[1]
             mean_1 = centers[0]
             fidelity = 0.5 * (counts[0, 1] + counts[1, 0])

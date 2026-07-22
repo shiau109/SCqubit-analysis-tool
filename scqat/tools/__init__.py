@@ -10,6 +10,11 @@ from .function_fitting import FunctionFitting, register_fitter, get_fitter
 from .dip_fit import DIP_KNOBS, DIP_METHODS, fit_dip, validate_dip_kwargs
 from .peak_fit import PEAK_KNOBS, fit_peaks, validate_peak_kwargs
 from .peak_map import track_peaks
+from .discriminate import (
+    DISCRIMINATE_KNOBS,
+    discriminate_states,
+    validate_discriminate_kwargs,
+)
 from . import fit_abscos  # noqa: F401
 from . import fit_cosine  # noqa: F401
 from . import fit_damped_oscillation  # noqa: F401

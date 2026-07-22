@@ -6,7 +6,8 @@ import xarray as xr
 import matplotlib.pyplot as plt
 
 from scqat.core.base_estimator import BaseEstimator
-from scqat.estimators.state_discrimination import StateDiscriminationEstimator
+from scqat.tools.discriminate import DISCRIMINATE_KNOBS, discriminate_states
+from scqat.estimators.state_discrimination import state_iq_arrays
 from scqat.estimators.readout_fidelity.visualization import (
     plot_outlier_vs_sweep,
     plot_std_vs_sweep,
@@ -32,10 +33,11 @@ class ReadoutFidelityEstimator(BaseEstimator):
           :class:`StateDiscriminationEstimator`)
         - Coordinate:  the swept axis named by :attr:`sweep_coord`
 
-    For each value of ``sweep_coord`` the data is sliced and handed to a
-    :class:`StateDiscriminationEstimator`; the per-slice trained GMM std/means,
-    outlier probability, normalised residue, Gaussian norms and direct counts are
-    collected as a function of the sweep. The **fidelity** at each point is the
+    For each value of ``sweep_coord`` the data is sliced and handed to the
+    family-shared reduction
+    :func:`scqat.tools.discriminate.discriminate_states`; the per-slice trained
+    GMM std/means, outlier probability, normalised residue, Gaussian norms and
+    direct counts are collected as a function of the sweep. The **fidelity** at each point is the
     mean of the confusion-matrix diagonal (``direct_counts[k, k]`` = fraction of
     prepared-state-k shots assigned to label k), and the reported answer
     (``best_sweep_value`` / ``best_fidelity``) is the point that maximises it.
@@ -75,11 +77,12 @@ class ReadoutFidelityEstimator(BaseEstimator):
         Run state discrimination per sweep point, collect the summary curves, and
         select the fidelity-optimal sweep value.
 
-        Kwargs:
+        Kwargs — flat and fully owned; unknown names raise:
             sweep_coord (str): Override the swept coordinate name.
-            user_std / user_mean / outlier_sigma: Forwarded to
-                :class:`StateDiscriminationEstimator`.
-            (subclasses may consume further kwargs, e.g. ``outliers_threshold``.)
+            user_std / user_mean / outlier_sigma: Knobs of
+                :func:`scqat.tools.discriminate.discriminate_states`.
+            outliers_threshold (float): Selection constraint consumed by
+                :class:`ReadoutPowerFidelityEstimator` (accepted, unused here).
 
         Returns the sweep axis, per-sweep arrays, and the best point:
             sweep_coord (name), sweep_values (S,),
@@ -89,10 +92,18 @@ class ReadoutFidelityEstimator(BaseEstimator):
             failed (S,), best_index, best_sweep_value, best_fidelity, success.
         """
         coord = self._resolve_coord(kwargs)
-        sd_kwargs = {k: kwargs[k] for k in ('user_std', 'user_mean', 'outlier_sigma') if k in kwargs}
+        # Fail loudly BEFORE any per-slice fit — a typo'd knob must never be
+        # swallowed by the per-slice try/except.
+        valid = DISCRIMINATE_KNOBS | {'sweep_coord', 'outliers_threshold'}
+        unknown = set(kwargs) - valid
+        if unknown:
+            raise ValueError(
+                f"Unknown keyword argument(s) {sorted(unknown)} for "
+                f"{type(self).__name__}; valid: {sorted(valid)}"
+            )
+        sd_knobs = {k: kwargs[k] for k in DISCRIMINATE_KNOBS if k in kwargs}
 
         sweep_values = np.asarray(dataset.coords[coord].values)
-        sd = StateDiscriminationEstimator()
 
         std_list, mean_list, p_outlier_list, norm_res_list = [], [], [], []
         gaussian_norms_list, direct_counts_list, failed_list = [], [], []
@@ -100,7 +111,8 @@ class ReadoutFidelityEstimator(BaseEstimator):
         for val in sweep_values:
             subdata = dataset.sel({coord: val})
             try:
-                res = sd.extract_parameters(subdata, **sd_kwargs)
+                I, Q = state_iq_arrays(subdata)
+                res = discriminate_states(I, Q, **sd_knobs)
                 tp = res['trained_paras']
                 std_list.append(float(tp['std']))
                 mean_list.append(np.asarray(tp['mean'], dtype=float))

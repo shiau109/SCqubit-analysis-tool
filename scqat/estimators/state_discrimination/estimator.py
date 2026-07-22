@@ -1,11 +1,11 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
 
 from scqat.core.base_estimator import BaseEstimator
-from scqat.tools.fit_gaussian2d import FitMultiGaussian2D
+from scqat.tools.discriminate import discriminate_states, validate_discriminate_kwargs
 from scqat.estimators.state_discrimination.visualization import (
     plot_prepared_state_scatter,
     plot_2d_histogram,
@@ -14,72 +14,75 @@ from scqat.estimators.state_discrimination.visualization import (
     axis_formatter,
 )
 
+
+def state_iq_arrays(dataset: xr.Dataset) -> Tuple[np.ndarray, np.ndarray]:
+    """Resolve a discrimination Dataset into the ``(n_prepared_state, n_shot)``
+    I/Q arrays :func:`scqat.tools.discriminate.discriminate_states` consumes
+    (row order = the dataset's ``prepared_state`` order). Shared by every
+    estimator in the discrimination family."""
+    states = dataset.coords["prepared_state"].values
+    I = np.stack([dataset["I"].sel(prepared_state=s).values.ravel() for s in states])
+    Q = np.stack([dataset["Q"].sel(prepared_state=s).values.ravel() for s in states])
+    return I, Q
+
+
 class StateDiscriminationEstimator(BaseEstimator):
     """
-    Analyzes I/Q plane data for superconducting qubit state discrimination 
+    Analyzes I/Q plane data for superconducting qubit state discrimination
     using 2D Multi-Gaussian Mixture Models.
+
+    The heavy lifting is the family-shared reduction
+    :func:`scqat.tools.discriminate.discriminate_states`; this estimator only
+    resolves the dataset into arrays, forwards its flat kwarg surface, and owns
+    the artifacts (metadata / plot data / figures).
     """
 
     estimator_name = "state_discrimination"
 
     def _check_data(self, dataset: xr.Dataset) -> None:
-        """Ensures the dataset has the required coordinates for this estimator."""
+        """Ensures the dataset has the required coordinates and variables."""
         for coords_name in ["shot_idx", "prepared_state"]:
             if coords_name not in dataset.coords:
                 raise ValueError(f"State Discrimination requires '{coords_name}' coordinate in the dataset.")
+        for var in ("I", "Q"):
+            if var not in dataset:
+                raise ValueError(f"State Discrimination requires an '{var}' variable in the dataset.")
 
     def extract_parameters(self, dataset: xr.Dataset, **kwargs) -> Dict[str, Any]:
         """
         Executes the GMM fitting and population counting.
-        
-        Kwargs:
+
+        Kwargs — flat and fully owned; unknown names raise:
             user_mean (list): Optional initial guess for GMM centers.
             user_std (float): Optional initial guess for Gaussian std dev.
             outlier_sigma (float): Threshold for outlier detection (default: 3).
         """
-        user_mean = kwargs.get('user_mean', None)
-        user_std = kwargs.get('user_std', None)
-        outlier_sigma = kwargs.get('outlier_sigma', 3)
+        validate_discriminate_kwargs(kwargs)
+        I, Q = state_iq_arrays(dataset)
+        res = discriminate_states(I, Q, **kwargs)
 
-        # 1. Preprocess raw data into 2D Histograms
-        hist_dataset, mean_init, std_init = self._preprocess_data(dataset, user_std)
-
-        # 2. Train the global GMM Model
-        trained_paras = self._train_global_model(hist_dataset, mean_init, std_init, user_mean, user_std)
-
-        # 3. Fit individual prepared states
-        fit_results, fit_residues, norm_res = self._fit_individual_states(hist_dataset, trained_paras)
-
-        # 4. Calculate distances, labels, and outliers
-        distance_dataset = self._calc_distances(dataset, trained_paras['mean'])
-        state_label = distance_dataset['distance'].argmin(dim='center')
-        
-        max_label = int(state_label.max().item())
-        counts = xr.apply_ufunc(
-            lambda arr: np.bincount(arr, minlength=max_label + 1),
-            state_label,
-            input_core_dims=[['shot_idx' if 'shot_idx' in state_label.dims else 'idx_shot']],
-            output_core_dims=[['count']],
-            vectorize=True,
-            output_dtypes=[int]
+        # Re-wrap the array outputs in the xarray shapes this estimator's
+        # artifacts (plot data / figures) are built from.
+        states = dataset.coords["prepared_state"].values
+        hist_dataset = xr.Dataset(
+            {"density": (["prepared_state", "y", "x"], res["density"])},
+            coords={"prepared_state": states, "x": res["hist_x"], "y": res["hist_y"]},
+        )
+        fit_residues = xr.DataArray(
+            res["fit_residues"],
+            dims=["prepared_state", "y", "x"],
+            coords={"prepared_state": states, "y": res["hist_y"], "x": res["hist_x"]},
         )
 
-        gaussian_norms = np.array([res['amp'] for res in fit_results])
-        gaussian_norms = gaussian_norms / np.sum(gaussian_norms, axis=1, keepdims=True)
-
-        outlier_mask = distance_dataset['distance'].min(dim='center') > (outlier_sigma * np.mean(trained_paras['std']))
-        p_outlier = np.count_nonzero(outlier_mask, axis=1) / dataset['shot_idx'].size
-
-        # 5. Pack everything into the results dictionary
         return {
-            'trained_paras': trained_paras,
-            'fitted_paras': fit_results,
-            'gaussian_norms': gaussian_norms,
-            'direct_counts': counts.values / dataset['shot_idx'].size,
-            'state_label': state_label.values,
-            'outlier_mask': outlier_mask.values,
-            'outlier_probability': p_outlier,
-            'norm_res': norm_res,
+            'trained_paras': res["trained_paras"],
+            'fitted_paras': res["fitted_paras"],
+            'gaussian_norms': res["gaussian_norms"],
+            'direct_counts': res["direct_counts"],
+            'state_label': res["state_label"],
+            'outlier_mask': res["outlier_mask"],
+            'outlier_probability': res["outlier_probability"],
+            'norm_res': res["norm_res"],
             'fit_residues': fit_residues,
             'hist_dataset': hist_dataset # Saving the binned data for plotting later
         }
@@ -188,145 +191,3 @@ class StateDiscriminationEstimator(BaseEstimator):
             "fit_residue": fig_residue,
         }
 
-    # ==========================================
-    # STATELESS HELPER METHODS
-    # ==========================================
-    
-    @staticmethod
-    def _robust_sigma(da: xr.DataArray) -> np.ndarray:
-        """Per-prepared_state Gaussian width from the median absolute deviation
-        (MAD / 0.6745, the consistency factor for a normal distribution); one value per
-        ``prepared_state``. MAD is used instead of the plain standard deviation because
-        each prepared state's data is slightly bimodal — a few percent of shots are
-        mis-assigned and sit in the OTHER blob — and a std of that bimodal data is
-        inflated by the inter-blob separation. MAD ignores that minority tail and tracks
-        the dominant blob's width."""
-        med = da.median(dim='shot_idx')
-        return (np.abs(da - med).median(dim='shot_idx') / 0.67448975).values
-
-    def _preprocess_data(self, dataset: xr.Dataset, user_std=None):
-        """Stateless helper to bin the raw data into 2D histograms."""
-        prepared_states = dataset.coords['prepared_state'].values
-        
-        # Per-state single-blob width for bin sizing and as the GMM sigma seed: the
-        # rotation-invariant RMS of the two axes, sqrt((sigma_I**2 + sigma_Q**2) / 2), of
-        # the robust (MAD-based) per-axis widths.
-        #  * RMS (not min(sigma_I, sigma_Q)) keeps the bin size from oscillating when an
-        #    elongated blob rotates with a swept parameter (e.g. readout frequency, whose
-        #    resonator phase rotates the IQ blobs) — min would alias into a period-2
-        #    zigzag in std/norm_res/outliers across the sweep.
-        #  * MAD (not std) keeps the few-percent of mis-assigned shots in the other blob
-        #    from inflating the width (a std of the bimodal per-state data overestimates
-        #    sigma, blowing up the n-sigma circles and the SNR).
-        sig_I = self._robust_sigma(dataset['I'])
-        sig_Q = self._robust_sigma(dataset['Q'])
-        std_init = float(np.min(np.sqrt((sig_I**2 + sig_Q**2) / 2)))
-
-        step = (user_std if user_std else std_init) / 3
-        # step = max(step, 1e-3)
-        
-        I_all, Q_all = dataset['I'].values.ravel(), dataset['Q'].values.ravel()
-        xedges = np.arange(I_all.min(), I_all.max() + step, step)
-        yedges = np.arange(Q_all.min(), Q_all.max() + step, step)
-        if len(xedges) < 2: xedges = np.linspace(I_all.min(), I_all.max(), 2)
-        if len(yedges) < 2: yedges = np.linspace(Q_all.min(), Q_all.max(), 2)
-        
-        xcenters = 0.5 * (xedges[:-1] + xedges[1:])
-        ycenters = 0.5 * (yedges[:-1] + yedges[1:])
-        
-        density_arr = np.zeros((len(prepared_states), len(ycenters), len(xcenters)))
-        mean_init = []
-        
-        for i, state in enumerate(prepared_states):
-            I, Q = dataset['I'].sel(prepared_state=state).values, dataset['Q'].sel(prepared_state=state).values
-            H, _, _ = np.histogram2d(I, Q, bins=[xedges, yedges], density=True)
-            density_arr[i, :, :] = H.T
-            
-            max_idx = np.unravel_index(np.argmax(H), H.shape)
-            mean_init.append(np.array([xcenters[max_idx[0]], ycenters[max_idx[1]]]))
-
-        hist_dataset = xr.Dataset(
-            {'density': (['prepared_state', 'y', 'x'], density_arr)},
-            coords={'prepared_state': prepared_states, 'x': xcenters, 'y': ycenters}
-        )
-        return hist_dataset, np.array(mean_init), std_init
-
-    def _train_global_model(self, hist_dataset, mean_init, std_init, user_mean, user_std):
-        """Stateless helper for global GMM fitting."""
-        if user_mean is not None and user_std is not None:
-            return {
-                'mean': np.array(user_mean), 'std': user_std, 
-                'covariance': user_std**2, 'amp': np.ones(len(user_mean))
-            }
-
-        density_all = np.sum(hist_dataset['density'].values, axis=0)
-        x, y = hist_dataset['x'].values, hist_dataset['y'].values
-        
-        fit_result = self._do_lmfit_2dgaussian(density_all, x, y, user_mean or mean_init, user_std or std_init)
-        return self._extract_params(fit_result, len(mean_init))
-
-    def _fit_individual_states(self, hist_dataset, trained_paras):
-        """Stateless helper to apply the global model to individual states."""
-        fit_results, fit_residues_list, norm_res = [], [], []
-        x, y = hist_dataset['x'].values, hist_dataset['y'].values
-        
-        for state in hist_dataset['prepared_state'].values:
-            density = hist_dataset['density'].sel(prepared_state=state).values
-            fit_result = self._do_lmfit_2dgaussian(density, x, y, trained_paras['mean'], trained_paras['std'])
-            fit_results.append(self._extract_params(fit_result, len(trained_paras['mean'])))
-            
-            best_fit = fit_result.best_fit.reshape(density.shape)
-            residue = density - best_fit
-            fit_residues_list.append(residue)
-            norm_res.append(np.nansum(residue) / np.nansum(density) if np.nansum(density) != 0 else np.nan)
-
-        fit_residues = xr.DataArray(
-            np.stack(fit_residues_list, axis=0),
-            dims=["prepared_state", "y", "x"],
-            coords={
-                "prepared_state": hist_dataset["prepared_state"].values,
-                "y": y, "x": x,
-            },
-        )
-        return fit_results, fit_residues, norm_res
-
-    def _calc_distances(self, dataset, mean_trained):
-        """Stateless helper to map point distances to GMM centers."""
-        prepared_states = dataset.coords['prepared_state'].values
-        n_center, n_state, n_shot = len(mean_trained), len(prepared_states), dataset.sizes['shot_idx']
-        dist_arr = np.zeros((n_center, n_state, n_shot))
-        
-        for i_center, mean in enumerate(mean_trained):
-            for i_state, state in enumerate(prepared_states):
-                I = dataset['I'].sel(prepared_state=state).values.ravel()
-                Q = dataset['Q'].sel(prepared_state=state).values.ravel()
-                dist_arr[i_center, i_state, :] = np.sqrt((I - mean[0])**2 + (Q - mean[1])**2)
-
-        return xr.Dataset(
-            {'distance': (['center', 'prepared_state', 'idx_shot'], dist_arr)},
-            coords={'center': np.arange(n_center), 'prepared_state': prepared_states, 'idx_shot': np.arange(n_shot)}
-        )
-
-    def _do_lmfit_2dgaussian(self, density, x, y, mean, std):
-        """Wrapper for the FitMultiGaussian2D utility."""
-        n_gauss = len(mean)
-        fitter = FitMultiGaussian2D(density, x, y, n_gauss=n_gauss)
-        fitter.params['offset'].set(value=0, vary=False)
-        for i in range(n_gauss):
-            fitter.params[f'g{i}_x0'].set(value=mean[i][0], vary=False)
-            fitter.params[f'g{i}_y0'].set(value=mean[i][1], vary=False)
-            if i == 0:
-                fitter.params[f'g{i}_sigma_x'].set(value=std, vary=False)
-            else:
-                fitter.params[f'g{i}_sigma_x'].set(expr='g0_sigma_x')
-            fitter.params[f'g{i}_sigma_y'].set(expr='g0_sigma_x')
-        return fitter.fit()
-
-    def _extract_params(self, fit_result, n_gauss):
-        """Unpacks lmfit results into a dictionary."""
-        mean, amp = [], []
-        for i in range(n_gauss):
-            mean.append(np.array([fit_result.params[f'g{i}_x0'].value, fit_result.params[f'g{i}_y0'].value]))
-            amp.append(fit_result.params[f'g{i}_amp'].value)
-        std = fit_result.params['g0_sigma_x'].value
-        return {'mean': np.array(mean), 'std': std, 'covariance': std**2, 'amp': np.array(amp)}
