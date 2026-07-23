@@ -27,12 +27,17 @@ class QubitSQRBEstimator(BaseEstimator):
             raise ValueError("SQRB estimator requires a 'depth' coordinate")
 
     def extract_parameters(self, dataset: xr.Dataset, **kwargs) -> Dict[str, Any]:
+        readout_mode = kwargs.get("readout_mode", "raw_iq")
         var_name = "state" if "state" in dataset.data_vars else ("I" if "I" in dataset.data_vars else "signal")
-        # Average over sequence_idx to get the decay curve
         if "sequence_idx" in dataset.dims:
             da = dataset[var_name].mean(dim="sequence_idx").squeeze().rename({"depth": "x"})
         else:
             da = dataset[var_name].squeeze().rename({"depth": "x"})
+
+        # If data is in probability units and measured as P(|1>) (starting near 0), convert to P(|0>) = 1 - P(|1>)
+        if readout_mode == "hardware_state" or var_name == "state":
+            if float(da.values[0]) < 0.5:
+                da = 1.0 - da
             
         fit_result = FitBasePowerLaw(da).fit()
         alpha = float(fit_result.params["base"].value)
@@ -63,13 +68,18 @@ class QubitSQRBEstimator(BaseEstimator):
     def build_plot_data(
         self, dataset: xr.Dataset, results: Dict[str, Any], **kwargs
     ) -> Optional[xr.Dataset]:
+        readout_mode = kwargs.get("readout_mode", results.get("readout_mode", "raw_iq"))
         var_name = "state" if "state" in dataset.data_vars else ("I" if "I" in dataset.data_vars else "signal")
-        depths = np.asarray(dataset["depth"].values, dtype=float)
         if "sequence_idx" in dataset.dims:
             y_avg = np.asarray(dataset[var_name].mean(dim="sequence_idx").values, dtype=float)
         else:
             y_avg = np.asarray(dataset[var_name].values, dtype=float)
-            
+
+        if readout_mode == "hardware_state" or var_name == "state":
+            if len(y_avg) > 0 and y_avg[0] < 0.5:
+                y_avg = 1.0 - y_avg
+
+        depths = np.asarray(dataset["depth"].values, dtype=float)
         return xr.Dataset(
             {
                 "signal": ("depth", y_avg),
@@ -100,9 +110,15 @@ class QubitSQRBEstimator(BaseEstimator):
         ax.plot(plot_data["depth"], plot_data["signal"], "o", color="#1f77b4", label="Data (sequence avg)", markersize=5)
         ax.plot(plot_data["depth"], plot_data["best_fit"], "-", color="#d62728", linewidth=2, label="Power-law fit")
 
+        readout_mode = kwargs.get("readout_mode", results.get("readout_mode", "raw_iq"))
         ax.set_xscale("log")
         ax.set_xlabel("Clifford Depth (log scale)", fontsize=11)
-        ax.set_ylabel("Readout Signal (a.u.)", fontsize=11)
+
+        if readout_mode in ("hardware_state", "software_gmm"):
+            ax.set_yscale("log")
+            ax.set_ylabel("Ground State Population P(|0>) (log scale)", fontsize=11)
+        else:
+            ax.set_ylabel("Readout Signal (a.u.)", fontsize=11)
 
         fidelity = plot_data.attrs.get("gate_fidelity", np.nan) * 100.0
         epg = plot_data.attrs.get("error_per_gate", np.nan)

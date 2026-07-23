@@ -33,13 +33,15 @@ class QubitRelaxationEstimator(BaseEstimator):
     estimator_name = "qubit_relaxation"
 
     def _check_data(self, dataset: xr.Dataset) -> None:
-        if "signal" not in dataset.data_vars:
-            raise ValueError("T1 estimator requires a 'signal' data variable")
+        if "signal" not in dataset.data_vars and "I" not in dataset.data_vars and "state" not in dataset.data_vars:
+            raise ValueError("T1 estimator requires a 'signal', 'I', or 'state' data variable")
         if "wait_time" not in dataset.coords:
             raise ValueError("T1 estimator requires a 'wait_time' coordinate (seconds)")
 
     def extract_parameters(self, dataset: xr.Dataset, **kwargs) -> Dict[str, Any]:
-        da = dataset["signal"].squeeze().rename({"wait_time": "x"})
+        var_name = "state" if "state" in dataset.data_vars else ("signal" if "signal" in dataset.data_vars else "I")
+        da = dataset[var_name].squeeze().rename({"wait_time": "x"})
+
         fit_result = FitExponentialDecay(da).fit()
         t1 = float(fit_result.params["tau"].value)
         t_span = float(da["x"].values[-1] - da["x"].values[0])
@@ -49,7 +51,6 @@ class QubitRelaxationEstimator(BaseEstimator):
             "amplitude": float(fit_result.params["a"].value),
             "offset": float(fit_result.params["c"].value),
             "redchi": float(fit_result.redchi),
-            # physical: converged, positive, and not absurdly beyond the swept window
             "success": bool(fit_result.success) and np.isfinite(t1) and 0 < t1 < 10 * t_span,
             "best_fit": np.asarray(fit_result.best_fit, dtype=float),
         }
@@ -61,9 +62,10 @@ class QubitRelaxationEstimator(BaseEstimator):
         self, dataset: xr.Dataset, results: Dict[str, Any], **kwargs
     ) -> Optional[xr.Dataset]:
         wait = np.asarray(dataset["wait_time"].values, dtype=float)
+        var_name = "signal" if "signal" in dataset.data_vars else ("state" if "state" in dataset.data_vars else "I")
         return xr.Dataset(
             {
-                "signal": ("wait_time", np.asarray(dataset["signal"].values, dtype=float)),
+                "signal": ("wait_time", np.asarray(dataset[var_name].values, dtype=float)),
                 "best_fit": ("wait_time", results["best_fit"]),
             },
             coords={"wait_time": wait},

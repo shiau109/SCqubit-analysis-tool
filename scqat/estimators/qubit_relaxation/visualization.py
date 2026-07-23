@@ -17,3 +17,4 @@ def plot_decay(plot_data: xr.Dataset) -> plt.Figure:
     ax.legend()
     fig.tight_layout()
     return fig
+    return fig

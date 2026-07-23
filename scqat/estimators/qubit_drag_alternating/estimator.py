@@ -15,8 +15,8 @@ class QubitDragAlternatingEstimator(BaseEstimator):
     estimator_name = "qubit_drag_alternating"
 
     def _check_data(self, dataset: xr.Dataset) -> None:
-        if "signal" not in dataset.data_vars:
-            raise ValueError("DRAG alternating estimator requires a 'signal' data variable")
+        if "signal" not in dataset.data_vars and "state" not in dataset.data_vars and "I" not in dataset.data_vars:
+            raise ValueError("DRAG alternating estimator requires a 'signal', 'state', or 'I' data variable")
         if "beta" not in dataset.coords:
             raise ValueError("DRAG alternating estimator requires a 'beta' coordinate")
         if "nb_of_pulses" not in dataset.coords:
@@ -25,7 +25,11 @@ class QubitDragAlternatingEstimator(BaseEstimator):
     def extract_parameters(self, dataset: xr.Dataset, **kwargs) -> Dict[str, Any]:
         beta = dataset["beta"].values
         npi = dataset["nb_of_pulses"].values
-        signal = dataset["signal"].values  # shape (nb_of_pulses, beta)
+        readout_mode = kwargs.get("readout_mode", "raw_iq")
+        gef_centers = kwargs.get("gef_centers")
+
+        var_name = "state" if "state" in dataset.data_vars else ("signal" if "signal" in dataset.data_vars else "I")
+        signal = dataset[var_name].values
         
         # Calculate signal variance over the pulse sweep axis for each beta point
         # The optimal beta point minimizes the error accumulation and remains flat
@@ -44,6 +48,7 @@ class QubitDragAlternatingEstimator(BaseEstimator):
             opt_beta = float(beta[np.argmin(variances)])
         
         return {
+            "readout_mode": readout_mode,
             "beta": beta.tolist(),
             "nb_of_pulses": npi.tolist(),
             "opt_beta": opt_beta,

@@ -24,16 +24,23 @@ class QubitDragEquatorEstimator(BaseEstimator):
 
     def extract_parameters(self, dataset: xr.Dataset, **kwargs) -> Dict[str, Any]:
         beta = dataset["beta"].values
-        # signal has shape (seq_idx, beta)
-        signal = dataset["signal"].values
-        
+        readout_mode = kwargs.get("readout_mode", "raw_iq")
+        gef_centers = kwargs.get("gef_centers")
+
+        if "state" in dataset:
+            signal = dataset["state"].values
+        elif "signal" in dataset:
+            signal = dataset["signal"].values
+        else:
+            signal = dataset["I"].values
+
         y0 = signal[0, :]
         y1 = signal[1, :]
-        
+
         # Fit lines to y0 (Rx(pi)-Ry(pi/2)) and y1 (Ry(pi)-Rx(pi/2)) to find their intersection
         p0 = np.polyfit(beta, y0, 1)
         p1 = np.polyfit(beta, y1, 1)
-        
+
         slope_diff = p0[0] - p1[0]
         if np.abs(slope_diff) > 1e-8:
             opt_beta = (p1[1] - p0[1]) / slope_diff
@@ -41,8 +48,9 @@ class QubitDragEquatorEstimator(BaseEstimator):
         else:
             opt_beta = float((beta[0] + beta[-1]) / 2)
             success = False
-            
+
         return {
+            "readout_mode": readout_mode,
             "beta": beta.tolist(),
             "opt_beta": float(opt_beta) if success else float((p1[1] - p0[1]) / slope_diff) if abs(slope_diff) > 1e-8 else None,
             "success": True if abs(slope_diff) > 1e-8 else False,
